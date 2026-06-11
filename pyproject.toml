@@ -1,0 +1,37 @@
+[project]
+name = "skillsbench-valkyrie"
+version = "0.1.0"
+description = "Valkyrie benchmark-service adapter for SkillsBench"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "create-benchmark-service @ git+https://github.com/vals-ai/create-benchmark-service.git",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skillsbench_valkyrie"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

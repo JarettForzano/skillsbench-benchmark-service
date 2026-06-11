@@ -1,0 +1,13 @@
+.git/
+.github/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+tests/
+scripts/
+skillsbench/.git/
+skillsbench/.venv/
+skillsbench/.pytest_cache/
+skillsbench/.ruff_cache/
