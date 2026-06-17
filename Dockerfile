@@ -13,6 +13,7 @@ COPY src ./src
 COPY skillsbench ./skillsbench
 
 ENV SKILLSBENCH_REPO_ROOT=/app/skillsbench
+ENV SKILLSBENCH_VALKYRIE_IMAGE_MANIFEST=/app/image-manifest.json
 RUN uv sync --locked --no-dev
 
 EXPOSE 8001
