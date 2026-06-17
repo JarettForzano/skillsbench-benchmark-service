@@ -1,0 +1,787 @@
+{
+  "tasks": {
+    "3d-scan-calc": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:3d-scan-calc-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "ada-bathroom-plan-repair": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:ada-bathroom-plan-repair-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "adaptive-cruise-control": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:adaptive-cruise-control-5149881af40a",
+      "resources": {
+        "disk": 5,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "azure-bgp-oscillation-route-leak": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:azure-bgp-oscillation-route-leak-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "bike-rebalance": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:bike-rebalance-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 2
+      }
+    },
+    "citation-check": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:citation-check-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "civ6-adjacency-optimizer": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:civ6-adjacency-optimizer-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "court-form-filling": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:court-form-filling-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "crystallographic-wyckoff-position-analysis": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:crystallographic-wyckoff-position-analysis-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "dapt-intrusion-detection": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:dapt-intrusion-detection-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "data-to-d3": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:data-to-d3-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "debug-trl-grpo": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:debug-trl-grpo-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 4
+      }
+    },
+    "dialogue-parser": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:dialogue-parser-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "drone-planning-control": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:drone-planning-control-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "dynamic-object-aware-egomotion": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:dynamic-object-aware-egomotion-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "earthquake-phase-association": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:earthquake-phase-association-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 8
+      }
+    },
+    "earthquake-plate-calculation": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:earthquake-plate-calculation-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "econ-detrending-correlation": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:econ-detrending-correlation-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "edit-pdf": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:edit-pdf-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "energy-ac-optimal-power-flow": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:energy-ac-optimal-power-flow-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 2
+      }
+    },
+    "energy-market-pricing": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:energy-market-pricing-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "energy-unit-commitment": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:energy-unit-commitment-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 2
+      }
+    },
+    "enterprise-information-search": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:enterprise-information-search-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "exam-block-sequencing": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:exam-block-sequencing-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "exceltable-in-ppt": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:exceltable-in-ppt-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "exoplanet-detection-period": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:exoplanet-detection-period-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 1
+      }
+    },
+    "financial-modeling-qa": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:financial-modeling-qa-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "fix-build-agentops": {
+      "cwd": "/home/github/build",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-build-agentops-5149881af40a",
+      "resources": {
+        "disk": 8,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "fix-build-google-auto": {
+      "cwd": "/home/travis",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-build-google-auto-5149881af40a",
+      "resources": {
+        "disk": 8,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "fix-druid-loophole-cve": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-druid-loophole-cve-5149881af40a",
+      "resources": {
+        "disk": 20,
+        "memory": 24,
+        "vcpu": 8
+      }
+    },
+    "fix-erlang-ssh-cve": {
+      "cwd": "/app/workspace",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-erlang-ssh-cve-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 8
+      }
+    },
+    "fix-visual-stability": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-visual-stability-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "flink-query": {
+      "cwd": "/app/workspace",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:flink-query-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "flood-risk-analysis": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:flood-risk-analysis-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "glm-lake-mendota": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:glm-lake-mendota-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "gravitational-wave-detection": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:gravitational-wave-detection-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 8
+      }
+    },
+    "grid-dispatch-operator": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:grid-dispatch-operator-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "hvac-control": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:hvac-control-5149881af40a",
+      "resources": {
+        "disk": 5,
+        "memory": 2,
+        "vcpu": 2
+      }
+    },
+    "invoice-fraud-detection": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:invoice-fraud-detection-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "jax-computing-basics": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:jax-computing-basics-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "jpg-ocr-stat": {
+      "cwd": "/app/workspace",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:jpg-ocr-stat-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "lab-unit-harmonization": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:lab-unit-harmonization-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "lake-warming-attribution": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:lake-warming-attribution-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "latex-formula-extraction": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:latex-formula-extraction-5149881af40a",
+      "resources": {
+        "disk": 20,
+        "memory": 10,
+        "vcpu": 4
+      }
+    },
+    "lean4-proof": {
+      "cwd": "/app/workspace",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:lean4-proof-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "llm-prefix-cache-replay": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:llm-prefix-cache-replay-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "manufacturing-codebook-normalization": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:manufacturing-codebook-normalization-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "manufacturing-equipment-maintenance": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:manufacturing-equipment-maintenance-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "manufacturing-fjsp-optimization": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:manufacturing-fjsp-optimization-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "mario-coin-counting": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:mario-coin-counting-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "mars-clouds-clustering": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:mars-clouds-clustering-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "multilingual-video-dubbing": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:multilingual-video-dubbing-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "offer-letter-generator": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:offer-letter-generator-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "organize-messy-files": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:organize-messy-files-5149881af40a",
+      "resources": {
+        "disk": 20,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "paper-anonymizer": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:paper-anonymizer-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "parallel-tfidf-search": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:parallel-tfidf-search-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 8
+      }
+    },
+    "paratransit-routing": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:paratransit-routing-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 2
+      }
+    },
+    "pddl-airport-planning": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:pddl-airport-planning-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "pddl-tpp-planning": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:pddl-tpp-planning-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "pdf-excel-diff": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:pdf-excel-diff-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "powerlifting-coef-calc": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:powerlifting-coef-calc-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "pptx-reference-formatting": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:pptx-reference-formatting-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 2
+      }
+    },
+    "protein-expression-analysis": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:protein-expression-analysis-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 2
+      }
+    },
+    "python-scala-translation": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:python-scala-translation-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "quantum-numerical-simulation": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:quantum-numerical-simulation-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 10,
+        "vcpu": 4
+      }
+    },
+    "r2r-mpc-control": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:r2r-mpc-control-5149881af40a",
+      "resources": {
+        "disk": 5,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "radar-vital-signs": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:radar-vital-signs-5149881af40a",
+      "resources": {
+        "disk": 5,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "react-performance-debugging": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:react-performance-debugging-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "reserves-at-risk-calc": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:reserves-at-risk-calc-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "sales-pivot-analysis": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:sales-pivot-analysis-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "sec-financial-report": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:sec-financial-report-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "seismic-phase-picking": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:seismic-phase-picking-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 8,
+        "vcpu": 4
+      }
+    },
+    "setup-fuzzing-py": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:setup-fuzzing-py-5149881af40a",
+      "resources": {
+        "disk": 5,
+        "memory": 2,
+        "vcpu": 5
+      }
+    },
+    "shock-analysis-demand": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:shock-analysis-demand-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "shock-analysis-supply": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:shock-analysis-supply-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "simpo-code-reproduction": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:simpo-code-reproduction-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    },
+    "software-dependency-audit": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:software-dependency-audit-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "spring-boot-jakarta-migration": {
+      "cwd": "/workspace",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:spring-boot-jakarta-migration-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "suricata-custom-exfil": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:suricata-custom-exfil-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "syzkaller-ppdev-syzlang": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:syzkaller-ppdev-syzlang-5149881af40a",
+      "resources": {
+        "disk": 20,
+        "memory": 8,
+        "vcpu": 2
+      }
+    },
+    "threejs-structure-parser": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:threejs-structure-parser-5149881af40a",
+      "resources": {
+        "disk": 8,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "threejs-to-obj": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:threejs-to-obj-5149881af40a",
+      "resources": {
+        "disk": 8,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "tictoc-unnecessary-abort-detection": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:tictoc-unnecessary-abort-detection-5149881af40a",
+      "resources": {
+        "disk": 8,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "travel-planning": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:travel-planning-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
+    "video-silence-remover": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:video-silence-remover-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "weighted-gdp-calc": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:weighted-gdp-calc-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
+    "xlsx-recover-data": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:xlsx-recover-data-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 2,
+        "vcpu": 1
+      }
+    }
+  }
+}

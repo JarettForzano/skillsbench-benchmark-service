@@ -8,6 +8,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
+COPY image-manifest.json ./
 COPY src ./src
 COPY skillsbench ./skillsbench
 
