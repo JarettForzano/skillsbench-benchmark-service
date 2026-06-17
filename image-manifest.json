@@ -63,6 +63,15 @@
         "vcpu": 1
       }
     },
+    "cobol-gl-batch-reconcile": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:cobol-gl-batch-reconcile-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
     "court-form-filling": {
       "cwd": "/root",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:court-form-filling-5149881af40a",
@@ -115,6 +124,15 @@
         "disk": 10,
         "memory": 4,
         "vcpu": 1
+      }
+    },
+    "diff-transformer_impl": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:diff-transformer_impl-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
       }
     },
     "drone-planning-control": {
@@ -243,6 +261,15 @@
         "vcpu": 1
       }
     },
+    "find-topk-similiar-chemicals": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:find-topk-similiar-chemicals-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
     "fix-build-agentops": {
       "cwd": "/home/github/build",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-build-agentops-5149881af40a",
@@ -306,6 +333,15 @@
         "vcpu": 1
       }
     },
+    "gh-repo-analytics": {
+      "cwd": "/app",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:gh-repo-analytics-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
     "glm-lake-mendota": {
       "cwd": "/root",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:glm-lake-mendota-5149881af40a",
@@ -313,6 +349,15 @@
         "disk": 10,
         "memory": 4,
         "vcpu": 2
+      }
+    },
+    "gpu-cluster-online-scheduling": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:gpu-cluster-online-scheduling-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
       }
     },
     "gravitational-wave-detection": {
@@ -459,6 +504,15 @@
         "vcpu": 4
       }
     },
+    "mhc-layer-impl": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:mhc-layer-impl-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
     "multilingual-video-dubbing": {
       "cwd": "/root",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:multilingual-video-dubbing-5149881af40a",
@@ -466,6 +520,15 @@
         "disk": 10,
         "memory": 4,
         "vcpu": 2
+      }
+    },
+    "nda-playbook-review": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:nda-playbook-review-5149881af40a",
+      "resources": {
+        "disk": 2,
+        "memory": 1,
+        "vcpu": 1
       }
     },
     "offer-letter-generator": {
@@ -538,6 +601,24 @@
         "disk": 10,
         "memory": 4,
         "vcpu": 1
+      }
+    },
+    "pedestrian-traffic-counting": {
+      "cwd": "/app/video",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:pedestrian-traffic-counting-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 4
+      }
+    },
+    "pg-essay-to-audiobook": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:pg-essay-to-audiobook-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 2
       }
     },
     "powerlifting-coef-calc": {
@@ -630,6 +711,15 @@
         "vcpu": 1
       }
     },
+    "scheduling-email-assistant": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:scheduling-email-assistant-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 4,
+        "vcpu": 1
+      }
+    },
     "sec-financial-report": {
       "cwd": "/root",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:sec-financial-report-5149881af40a",
@@ -693,6 +783,15 @@
         "vcpu": 1
       }
     },
+    "speaker-diarization-subtitles": {
+      "cwd": "/app/workspace",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:speaker-diarization-subtitles-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 16,
+        "vcpu": 2
+      }
+    },
     "spring-boot-jakarta-migration": {
       "cwd": "/workspace",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:spring-boot-jakarta-migration-5149881af40a",
@@ -718,6 +817,15 @@
         "disk": 20,
         "memory": 8,
         "vcpu": 2
+      }
+    },
+    "taxonomy-tree-merge": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:taxonomy-tree-merge-5149881af40a",
+      "resources": {
+        "disk": 10,
+        "memory": 16,
+        "vcpu": 8
       }
     },
     "threejs-structure-parser": {
@@ -756,6 +864,15 @@
         "vcpu": 2
       }
     },
+    "video-filler-word-remover": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:video-filler-word-remover-5149881af40a",
+      "resources": {
+        "disk": 15,
+        "memory": 4,
+        "vcpu": 2
+      }
+    },
     "video-silence-remover": {
       "cwd": "/root",
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:video-silence-remover-5149881af40a",
@@ -763,6 +880,15 @@
         "disk": 10,
         "memory": 4,
         "vcpu": 1
+      }
+    },
+    "video-tutorial-indexer": {
+      "cwd": "/root",
+      "image": "public.ecr.aws/z4x6c5k7/skillsbench:video-tutorial-indexer-5149881af40a",
+      "resources": {
+        "disk": 20,
+        "memory": 8,
+        "vcpu": 2
       }
     },
     "weighted-gdp-calc": {
