@@ -135,6 +135,7 @@ async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
     assert result["resolved"] is True
     assert result["verifier_error"] is None
     assert "/tmp/skillsbench-tests.tar.gz" in sandbox.files
+    assert sandbox.command_calls[0][0].startswith("timeout --kill-after=30s 60s bash -lc")
     assert sandbox.command_calls[0][1] == "/app"
     assert sandbox.command_calls[0][2] == 60.0
 
