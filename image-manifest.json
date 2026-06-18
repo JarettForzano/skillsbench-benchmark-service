@@ -293,7 +293,7 @@
       "image": "public.ecr.aws/z4x6c5k7/skillsbench:fix-druid-loophole-cve-5149881af40a",
       "resources": {
         "disk": 20,
-        "memory": 24,
+        "memory": 16,
         "vcpu": 8
       }
     },
