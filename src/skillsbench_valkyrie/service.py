@@ -223,7 +223,10 @@ class SkillsBenchBenchmarkService(BenchmarkService):
             replace_target=True,
         )
 
-        test_cmd = f"chmod +x {shlex.quote(TESTS_DIR + '/test.sh')} && {shlex.quote(TESTS_DIR + '/test.sh')}"
+        test_cmd = _with_timeout(
+            f"chmod +x {shlex.quote(TESTS_DIR + '/test.sh')} && {shlex.quote(TESTS_DIR + '/test.sh')}",
+            task.verifier_timeout,
+        )
         verifier_error: str | None = None
         try:
             async for text in sandbox.command(test_cmd, cwd=cwd, timeout=task.verifier_timeout):
@@ -429,6 +432,13 @@ def _problem_path(cwd: str) -> str:
 
 def _dataset_injects_skills(dataset: str | None) -> bool:
     return dataset in {"with-skills", "extra-with-skills"}
+
+
+def _with_timeout(command: str, timeout_seconds: float | None) -> str:
+    """Wrap a verifier command in an in-container timeout when configured."""
+    if timeout_seconds is None:
+        return command
+    return f"timeout --kill-after=30s {math.ceil(timeout_seconds)}s bash -lc {shlex.quote(command)}"
 
 
 def _upload_environment_assets_enabled() -> bool:
