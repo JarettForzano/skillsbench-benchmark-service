@@ -27,6 +27,8 @@ from benchmark_service.schemas import (
 )
 from benchmark_service.v1_schemas import V1Task
 
+from .vals_helper import bounded_score, build_final_score_metadata
+
 REPO_ROOT_ENV = "SKILLSBENCH_REPO_ROOT"
 IMAGE_MANIFEST_ENV = "SKILLSBENCH_VALKYRIE_IMAGE_MANIFEST"
 DEFAULT_IMAGE_ENV = "SKILLSBENCH_VALKYRIE_DEFAULT_IMAGE"
@@ -269,35 +271,8 @@ class SkillsBenchBenchmarkService(BenchmarkService):
     async def calculate_final_score(
         self, evaluation_results: dict[str, Any], dataset: str | None = None
     ) -> FinalScoreResult:
-        scores: list[float] = []
-        errored = 0
-        resolved = 0
-
-        for result in evaluation_results.values():
-            if not isinstance(result, dict):
-                errored += 1
-                scores.append(0.0)
-                continue
-            score = _bounded_score(result.get("score", result.get("reward", 0.0)))
-            scores.append(score)
-            if score > 0.0:
-                resolved += 1
-            if result.get("verifier_error"):
-                errored += 1
-
-        total = len(evaluation_results)
-        mean_reward = sum(scores) / total if total else 0.0
-        return FinalScoreResult(
-            score=mean_reward * 100.0,
-            metadata={
-                "dataset": dataset or "default",
-                "total_tasks": total,
-                "resolved_tasks": resolved,
-                "errored_tasks": errored,
-                "mean_reward": mean_reward,
-                "score_scale": "0-100",
-            },
-        )
+        score, metadata = build_final_score_metadata(evaluation_results, dataset)
+        return FinalScoreResult(score=score, metadata=metadata)
 
 
 def _repo_root() -> Path:
@@ -540,14 +515,4 @@ async def _download_optional(sandbox: Sandbox, remote_path: str) -> bytes | None
 
 
 def _coerce_reward(payload: dict[str, Any]) -> float:
-    return _bounded_score(payload.get("reward", 0.0))
-
-
-def _bounded_score(value: Any) -> float:
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if math.isnan(score) or math.isinf(score):
-        return 0.0
-    return min(1.0, max(0.0, score))
+    return bounded_score(payload.get("reward", 0.0))

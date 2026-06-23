@@ -70,9 +70,7 @@ storage_mb = 10240
     )
     (task / "environment" / "Dockerfile").write_text("FROM python:3.12-slim\nWORKDIR /app\n", encoding="utf-8")
     (task / "environment" / "input.txt").write_text("fixture\n", encoding="utf-8")
-    (task / "environment" / "skills" / "hello-skill" / "SKILL.md").write_text(
-        "# hello\n", encoding="utf-8"
-    )
+    (task / "environment" / "skills" / "hello-skill" / "SKILL.md").write_text("# hello\n", encoding="utf-8")
     (task / "tests" / "test.sh").write_text("#!/bin/bash\necho 1 > /logs/verifier/reward.txt\n", encoding="utf-8")
 
     (root / "tasks-extra").mkdir()
@@ -144,13 +142,40 @@ async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
 
     result = await service.calculate_final_score(
         {
-            "a": {"score": 1.0},
-            "b": {"score": 0.5},
+            "a": {
+                "score": 1.0,
+                "metadata": {"category": "programming", "cost": 1.5},
+                "task_breakdown": {"agent_run_duration": 10.0},
+            },
+            "b": {
+                "status": "evaluated",
+                "result": {"score": 0.5, "metadata": {"category": "math", "duration_seconds": 20.0, "cost": 2.5}},
+            },
             "c": None,
-        }
+        },
+        dataset="with-skills",
     )
 
     assert result.score == 50.0
     assert result.metadata["total_tasks"] == 3
     assert result.metadata["resolved_tasks"] == 2
     assert result.metadata["errored_tasks"] == 1
+    assert result.metadata["score_types"]["score"]["unit"] == "percent"
+    assert result.metadata["primary_population"] == "full"
+    assert result.metadata["usage_components"] == [{"component": "generation.model"}]
+    assert result.metadata["results"]["full"]["counts"] == {
+        "total": 3,
+        "by_status": {"evaluated": 2, "error": 1},
+        "extra": {},
+    }
+    assert result.metadata["results"]["full"]["aggregated_metrics"]["total"]["duration_seconds"] == 30.0
+    assert result.metadata["results"]["full"]["aggregated_metrics"]["total"]["metadata"]["cost"] == {"total": 4.0}
+    assert result.metadata["results"]["full"]["aggregated_metrics"]["average_per_task"]["duration_seconds"] == 15.0
+    assert result.metadata["results"]["full"]["aggregated_metrics"]["average_per_task"]["metadata"]["cost"] == {
+        "total": 2.0
+    }
+    assert result.metadata["tasks"][0]["task_id"] == "a"
+    assert result.metadata["tasks"][0]["status"] == "evaluated"
+    assert result.metadata["tasks"][0]["scores"]["score"]["value"] == 100.0
+    assert result.metadata["tasks"][1]["extra"]["skillsbench"]["category"] == "math"
+    assert result.metadata["tasks"][2]["status"] == "error"
