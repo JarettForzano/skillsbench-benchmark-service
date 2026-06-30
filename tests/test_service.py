@@ -6,18 +6,28 @@ from typing import Any
 
 import pytest
 
+from benchmark_service import ImageSource, Sandbox
+from benchmark_service.schemas import StreamResultChunk
 from skillsbench_valkyrie.service import SkillsBenchBenchmarkService
 
 
-class FakeSandbox:
-    id = "fake-sandbox"
-    name = "fake-sandbox"
-    state = "started"
-
+class FakeSandbox(Sandbox):
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {"/logs/verifier/reward.txt": b"1\n"}
         self.exec_commands: list[str] = []
         self.command_calls: list[tuple[str, str | None, float | None]] = []
+
+    @property
+    def id(self) -> str:
+        return "fake-sandbox"
+
+    @property
+    def name(self) -> str:
+        return "fake-sandbox"
+
+    @property
+    def state(self) -> str:
+        return "started"
 
     async def exec(self, command: str, *, cwd: str | None = None, timeout: float | None = None) -> Any:
         self.exec_commands.append(command)
@@ -86,9 +96,10 @@ async def test_lists_and_retrieves_tasks(skillsbench_root: Path) -> None:
     tasks = await service.list_tasks("default")
     assert [task.id for task in tasks] == ["hello-world"]
     assert tasks[0].timeout == 120.0
-    assert tasks[0].has_skills is True
+    assert tasks[0].model_dump()["has_skills"] is True
 
     response = await service.retrieve_task("hello-world", dataset="default")
+    assert isinstance(response.source, ImageSource)
     assert response.source.image == "python:3.12-slim"
     assert response.problem_path == "/app/instruction.md"
     assert response.cwd == "/app"
@@ -104,7 +115,7 @@ async def test_setup_default_does_not_inject_skills(skillsbench_root: Path) -> N
 
     chunks = [chunk async for chunk in service.setup_task("hello-world", sandbox, dataset="default")]
 
-    assert chunks[-1].type == "result"
+    assert isinstance(chunks[-1], StreamResultChunk)
     assert chunks[-1].data["skills_dir"] is None
     assert sandbox.files["/app/instruction.md"].startswith(b"Create hello.txt")
     assert "/tmp/skillsbench-skills.tar.gz" not in sandbox.files
@@ -117,7 +128,7 @@ async def test_setup_with_skills_injects_skills(skillsbench_root: Path) -> None:
 
     chunks = [chunk async for chunk in service.setup_task("hello-world", sandbox, dataset="with-skills")]
 
-    assert chunks[-1].type == "result"
+    assert isinstance(chunks[-1], StreamResultChunk)
     assert chunks[-1].data["skills_dir"] == "/skills"
     assert "/tmp/skillsbench-skills.tar.gz" in sandbox.files
 
@@ -128,6 +139,7 @@ async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
 
     chunks = [chunk async for chunk in service.evaluate_instance("hello-world", sandbox, dataset="default")]
 
+    assert isinstance(chunks[-1], StreamResultChunk)
     result = chunks[-1].data
     assert result["score"] == 1.0
     assert result["resolved"] is True

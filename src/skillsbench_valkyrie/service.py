@@ -117,18 +117,20 @@ class SkillsBenchBenchmarkService(BenchmarkService):
 
     async def list_tasks(self, dataset: str | None = None) -> list[V1Task]:
         return [
-            V1Task(
-                id=task.task_id,
-                question=task.instruction,
-                timeout=task.agent_timeout,
-                category=task.metadata.get("category"),
-                subcategory=task.metadata.get("subcategory"),
-                difficulty=task.metadata.get("difficulty"),
-                task_type=task.metadata.get("task_type"),
-                modality=task.metadata.get("modality"),
-                interface=task.metadata.get("interface"),
-                skill_type=task.metadata.get("skill_type"),
-                has_skills=task.has_skills,
+            V1Task.model_validate(
+                {
+                    "id": task.task_id,
+                    "question": task.instruction,
+                    "timeout": task.agent_timeout,
+                    "category": task.metadata.get("category"),
+                    "subcategory": task.metadata.get("subcategory"),
+                    "difficulty": task.metadata.get("difficulty"),
+                    "task_type": task.metadata.get("task_type"),
+                    "modality": task.metadata.get("modality"),
+                    "interface": task.metadata.get("interface"),
+                    "skill_type": task.metadata.get("skill_type"),
+                    "has_skills": task.has_skills,
+                }
             )
             for task in self.get_dataset(dataset).values()
         ]
