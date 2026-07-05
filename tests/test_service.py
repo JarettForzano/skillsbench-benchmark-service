@@ -156,9 +156,10 @@ async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
     assert result["verifier_error"] is None
     assert result["metadata"]["difficulty"] == "easy"
     assert result["metadata"]["tags"] == ["hello", "fixture"]
-    assert str(result["metadata"]["task_digest"]).startswith("sha256:")
     assert "/tmp/skillsbench-tests.tar.gz" in sandbox.files
     assert not sandbox.command_calls[0][0].startswith("timeout ")
+    assert sandbox.command_calls[0][0].startswith("bash -lc ")
+    assert "set -o pipefail" in sandbox.command_calls[0][0]
     assert "/tests/test.sh" in sandbox.command_calls[0][0]
     assert "tee /logs/verifier/test_output.log" in sandbox.command_calls[0][0]
     assert "mkdir -p /logs/verifier /logs/tests" in sandbox.command_calls[0][0]
@@ -219,15 +220,15 @@ Create the native task output.
 
 async def test_evaluate_instance_reports_verifier_log_tail(skillsbench_root: Path) -> None:
     service = await SkillsBenchBenchmarkService.create()
-    sandbox = FakeSandbox(command_error=RuntimeError("boom"), reward=None)
+    sandbox = FakeSandbox(command_error=RuntimeError("boom"), reward=b"1\n")
     sandbox.files["/logs/verifier/test_output.log"] = b"setup started\nlast verifier line\n"
 
     chunks = [chunk async for chunk in service.evaluate_instance("hello-world", sandbox, dataset="default")]
 
     assert isinstance(chunks[-1], StreamResultChunk)
     result = chunks[-1].data
-    assert result["score"] == 0.0
-    assert result["resolved"] is False
+    assert result["score"] == 1.0
+    assert result["resolved"] is True
     assert result["verifier_error"] == "RuntimeError: boom"
     assert result["verifier_log_tail"] == "setup started\nlast verifier line\n"
     assert result["metadata"]["verifier_log_path"] == "/logs/verifier/test_output.log"
@@ -251,7 +252,6 @@ async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
                         "category": "math",
                         "difficulty": "hard",
                         "tags": ["algebra"],
-                        "task_digest": "sha256:abc",
                         "verifier_reward_dirs": ["/logs/verifier", "/logs/tests"],
                         "duration_seconds": 20.0,
                         "cost": 2.5,
@@ -269,7 +269,7 @@ async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
     assert result.metadata["errored_tasks"] == 1
     assert result.metadata["score_types"]["score"]["unit"] == "percent"
     assert result.metadata["primary_population"] == "full"
-    assert result.metadata["usage_components"] == [{"component": "generation.model"}, {"component": "generation.tools"}]
+    assert result.metadata["usage_components"] == [{"component": "generation.model"}]
     assert result.metadata["results"]["full"]["counts"] == {
         "total": 3,
         "by_status": {"evaluated": 2, "error": 1},
@@ -287,7 +287,6 @@ async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
     assert result.metadata["tasks"][1]["extra"]["skillsbench"]["category"] == "math"
     assert result.metadata["tasks"][1]["extra"]["skillsbench"]["difficulty"] == "hard"
     assert result.metadata["tasks"][1]["extra"]["skillsbench"]["tags"] == ["algebra"]
-    assert result.metadata["tasks"][1]["extra"]["skillsbench"]["task_digest"] == "sha256:abc"
     assert result.metadata["tasks"][1]["extra"]["skillsbench"]["verifier_reward_dirs"] == [
         "/logs/verifier",
         "/logs/tests",

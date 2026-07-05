@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import io
 import json
 import math
@@ -107,10 +106,6 @@ class TaskSpec:
     def verifier_timeout(self) -> float:
         value = self.verifier.get("timeout_sec")
         return float(value) if isinstance(value, int | float) else 600.0
-
-    @property
-    def task_digest(self) -> str:
-        return _task_digest(self.task_dir)
 
 
 class SkillsBenchBenchmarkService(BenchmarkService):
@@ -231,7 +226,6 @@ class SkillsBenchBenchmarkService(BenchmarkService):
 
         test_cmd = _verifier_command(task.remote_verifier_dir)
         verifier_error: str | None = None
-        reward_payload: dict[str, Any] | None = None
         reward_error: str | None = None
         try:
             async with asyncio.timeout(task.verifier_timeout):
@@ -247,7 +241,6 @@ class SkillsBenchBenchmarkService(BenchmarkService):
                 async for text in sandbox.command(test_cmd, cwd=cwd):
                     if text.strip():
                         yield StreamMessageChunk(type="message", data=text)
-                reward_payload, reward_error = await _read_reward(sandbox)
         except TimeoutError:
             verifier_error = f"verifier timed out after {task.verifier_timeout}s"
             yield StreamMessageChunk(type="message", data=f"Verifier command failed: {verifier_error}")
@@ -255,9 +248,7 @@ class SkillsBenchBenchmarkService(BenchmarkService):
             verifier_error = f"{type(exc).__name__}: {exc}"
             yield StreamMessageChunk(type="message", data=f"Verifier command failed: {verifier_error}")
 
-        if reward_payload is None:
-            reward_payload = {"reward": 0.0}
-
+        reward_payload, reward_error = await _read_reward(sandbox)
         if reward_error is not None:
             verifier_error = verifier_error or reward_error
             reward_payload = {"reward": 0.0}
@@ -279,7 +270,6 @@ class SkillsBenchBenchmarkService(BenchmarkService):
                 "metadata": {
                     "dataset": dataset or "default",
                     "task_set": task.task_set,
-                    "task_digest": task.task_digest,
                     "category": task.metadata.get("category"),
                     "difficulty": task.metadata.get("difficulty"),
                     "tags": _string_list(task.metadata.get("tags")),
@@ -384,20 +374,6 @@ def _read_task_markdown(path: Path) -> tuple[dict[str, Any], str]:
         raise ValueError(f"{path} frontmatter must be a YAML object")
 
     return config, body
-
-
-def _task_digest(task_dir: Path) -> str:
-    files = ("task.md",) if (task_dir / "task.md").is_file() else ("task.toml", "instruction.md")
-    digest = hashlib.sha256()
-    for relative in files:
-        path = task_dir / relative
-        if not path.is_file():
-            continue
-        digest.update(relative.encode())
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return "sha256:" + digest.hexdigest()
 
 
 def _get_task(dataset: dict[str, Any], task_id: str) -> TaskSpec:
@@ -527,12 +503,13 @@ def _string_list(value: Any) -> list[str]:
 
 def _verifier_command(remote_verifier_dir: str) -> str:
     script_path = posixpath.join(remote_verifier_dir, "test.sh")
-    return (
+    command = (
         "set -o pipefail; "
         f"mkdir -p {shlex.quote(VERIFIER_DIR)} {shlex.quote(TEST_LOGS_DIR)}; "
         f"{{ chmod +x {shlex.quote(script_path)} && {shlex.quote(script_path)}; }} "
         f"2>&1 | tee {shlex.quote(VERIFIER_OUTPUT_LOG)}"
     )
+    return f"bash -lc {shlex.quote(command)}"
 
 
 def _upload_environment_assets_enabled() -> bool:

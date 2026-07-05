@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 SCORE_TYPES = {"score": {"unit": "percent", "description": "Mean SkillsBench task reward.", "extra": {}}}
-USAGE_COMPONENTS = [{"component": "generation.model"}, {"component": "generation.tools"}]
+USAGE_COMPONENTS = [{"component": "generation.model"}]
 
 
 def build_final_score_metadata(evaluation_results: dict[str, Any], dataset: str | None) -> tuple[float, dict[str, Any]]:
@@ -74,7 +74,6 @@ def _vals_format_task(task_id: str, result: Any, dataset: str | None) -> dict[st
             "skillsbench": {
                 "dataset": metadata.get("dataset", dataset or "default"),
                 "task_set": metadata.get("task_set"),
-                "task_digest": metadata.get("task_digest"),
                 "category": metadata.get("category"),
                 "difficulty": metadata.get("difficulty"),
                 "tags": tags,
