@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "create-benchmark-service @ git+https://github.com/vals-ai/create-benchmark-service.git",
+    "pyyaml>=6.0.3",
 ]
 
 [build-system]

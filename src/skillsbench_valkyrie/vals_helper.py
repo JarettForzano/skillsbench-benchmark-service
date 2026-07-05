@@ -57,10 +57,14 @@ def _vals_format_task(task_id: str, result: Any, dataset: str | None) -> dict[st
         raw_metadata = payload.get("metadata", {})
         metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
 
+    verifier_log_tail = _string_or_none(payload.get("verifier_log_tail")) if payload is not None else None
+    verifier_log_path = _string_or_none(metadata.get("verifier_log_path"))
+    verifier_reward_dirs = _string_list(metadata.get("verifier_reward_dirs"))
+    tags = _string_list(metadata.get("tags"))
     task = {
         "task_id": task_id,
         "category": metadata.get("category"),
-        "tags": [],
+        "tags": tags,
         "status": status,
         "scores": {"score": {"value": score * 100.0, "stderr": None, "extra": {}}},
         "aggregated_metrics": _metric_group_from_result(result_mapping, payload),
@@ -71,10 +75,15 @@ def _vals_format_task(task_id: str, result: Any, dataset: str | None) -> dict[st
                 "dataset": metadata.get("dataset", dataset or "default"),
                 "task_set": metadata.get("task_set"),
                 "category": metadata.get("category"),
+                "difficulty": metadata.get("difficulty"),
+                "tags": tags,
                 "has_skills": metadata.get("has_skills"),
                 "skills_injected": metadata.get("skills_injected"),
                 "resolved": score > 0.0,
                 "score": score,
+                "verifier_log_path": verifier_log_path,
+                "verifier_reward_dirs": verifier_reward_dirs,
+                "verifier_log_tail": verifier_log_tail,
             }
         },
     }
@@ -173,6 +182,12 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
 
 
 def _is_number(value: Any) -> bool:

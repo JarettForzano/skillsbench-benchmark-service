@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import math
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml  # type: ignore[import-untyped]
 from benchmark_service import BenchmarkService, ImageSource, Resources, Sandbox, SnapshotSource
 from benchmark_service.schemas import (
     EvaluateResponseRequest,
@@ -39,8 +41,12 @@ DEFAULT_CWD = "/root"
 PROBLEM_FILENAME = "instruction.md"
 SKILLS_DIR = "/skills"
 TESTS_DIR = "/tests"
+NATIVE_VERIFIER_DIR = "/verifier"
 LOGS_DIR = "/logs"
 VERIFIER_DIR = "/logs/verifier"
+TEST_LOGS_DIR = "/logs/tests"
+VERIFIER_OUTPUT_LOG = f"{VERIFIER_DIR}/test_output.log"
+VERIFIER_LOG_TAIL_BYTES = 12000
 
 _WORKDIR_RE = re.compile(r"^\s*WORKDIR\s+(.+?)\s*$", re.IGNORECASE)
 
@@ -52,6 +58,8 @@ class TaskSpec:
     instruction: str
     config: dict[str, Any]
     task_set: Literal["default", "extra"]
+    verifier_dir_name: str = "tests"
+    remote_verifier_dir: str = TESTS_DIR
 
     @property
     def environment_dir(self) -> Path:
@@ -59,7 +67,7 @@ class TaskSpec:
 
     @property
     def tests_dir(self) -> Path:
-        return self.task_dir / "tests"
+        return self.task_dir / self.verifier_dir_name
 
     @property
     def skills_dir(self) -> Path:
@@ -95,9 +103,9 @@ class TaskSpec:
         return float(value) if isinstance(value, int | float) else None
 
     @property
-    def verifier_timeout(self) -> float | None:
+    def verifier_timeout(self) -> float:
         value = self.verifier.get("timeout_sec")
-        return float(value) if isinstance(value, int | float) else None
+        return float(value) if isinstance(value, int | float) else 600.0
 
 
 class SkillsBenchBenchmarkService(BenchmarkService):
@@ -117,18 +125,20 @@ class SkillsBenchBenchmarkService(BenchmarkService):
 
     async def list_tasks(self, dataset: str | None = None) -> list[V1Task]:
         return [
-            V1Task(
-                id=task.task_id,
-                question=task.instruction,
-                timeout=task.agent_timeout,
-                category=task.metadata.get("category"),
-                subcategory=task.metadata.get("subcategory"),
-                difficulty=task.metadata.get("difficulty"),
-                task_type=task.metadata.get("task_type"),
-                modality=task.metadata.get("modality"),
-                interface=task.metadata.get("interface"),
-                skill_type=task.metadata.get("skill_type"),
-                has_skills=task.has_skills,
+            V1Task.model_validate(
+                {
+                    "id": task.task_id,
+                    "question": task.instruction,
+                    "timeout": task.agent_timeout,
+                    "category": task.metadata.get("category"),
+                    "subcategory": task.metadata.get("subcategory"),
+                    "difficulty": task.metadata.get("difficulty"),
+                    "task_type": task.metadata.get("task_type"),
+                    "modality": task.metadata.get("modality"),
+                    "interface": task.metadata.get("interface"),
+                    "skill_type": task.metadata.get("skill_type"),
+                    "has_skills": task.has_skills,
+                }
             )
             for task in self.get_dataset(dataset).values()
         ]
@@ -212,26 +222,28 @@ class SkillsBenchBenchmarkService(BenchmarkService):
         cwd = _task_cwd(task, entry)
 
         yield StreamMessageChunk(type="message", data=f"Evaluating SkillsBench task {task_id}")
-        await sandbox.exec(f"mkdir -p {shlex.quote(VERIFIER_DIR)}")
-        await _upload_tree(
-            sandbox=sandbox,
-            source_dir=task.tests_dir,
-            remote_tar="/tmp/skillsbench-tests.tar.gz",
-            target_dir=TESTS_DIR,
-            excluded_prefixes=set(),
-            excluded_names=set(),
-            replace_target=True,
-        )
+        await sandbox.exec(f"mkdir -p {shlex.quote(VERIFIER_DIR)} {shlex.quote(TEST_LOGS_DIR)}")
 
-        test_cmd = _with_timeout(
-            f"chmod +x {shlex.quote(TESTS_DIR + '/test.sh')} && {shlex.quote(TESTS_DIR + '/test.sh')}",
-            task.verifier_timeout,
-        )
+        test_cmd = _verifier_command(task.remote_verifier_dir)
         verifier_error: str | None = None
+        reward_error: str | None = None
         try:
-            async for text in sandbox.command(test_cmd, cwd=cwd, timeout=task.verifier_timeout):
-                if text.strip():
-                    yield StreamMessageChunk(type="message", data=text)
+            async with asyncio.timeout(task.verifier_timeout):
+                await _upload_tree(
+                    sandbox=sandbox,
+                    source_dir=task.tests_dir,
+                    remote_tar="/tmp/skillsbench-tests.tar.gz",
+                    target_dir=task.remote_verifier_dir,
+                    excluded_prefixes=set(),
+                    excluded_names=set(),
+                    replace_target=True,
+                )
+                async for text in sandbox.command(test_cmd, cwd=cwd):
+                    if text.strip():
+                        yield StreamMessageChunk(type="message", data=text)
+        except TimeoutError:
+            verifier_error = f"verifier timed out after {task.verifier_timeout}s"
+            yield StreamMessageChunk(type="message", data=f"Verifier command failed: {verifier_error}")
         except Exception as exc:  # A verifier can fail before writing reward files.
             verifier_error = f"{type(exc).__name__}: {exc}"
             yield StreamMessageChunk(type="message", data=f"Verifier command failed: {verifier_error}")
@@ -241,6 +253,9 @@ class SkillsBenchBenchmarkService(BenchmarkService):
             verifier_error = verifier_error or reward_error
             reward_payload = {"reward": 0.0}
 
+        verifier_log_tail = None
+        if verifier_error:
+            verifier_log_tail = await _read_remote_text_tail(sandbox, VERIFIER_OUTPUT_LOG, VERIFIER_LOG_TAIL_BYTES)
         reward = _coerce_reward(reward_payload)
         yield StreamResultChunk(
             type="result",
@@ -250,13 +265,18 @@ class SkillsBenchBenchmarkService(BenchmarkService):
                 "reward": reward,
                 "resolved": reward > 0.0,
                 "verifier_error": verifier_error,
+                "verifier_log_tail": verifier_log_tail if verifier_error else None,
                 "reward_payload": reward_payload,
                 "metadata": {
                     "dataset": dataset or "default",
                     "task_set": task.task_set,
                     "category": task.metadata.get("category"),
+                    "difficulty": task.metadata.get("difficulty"),
+                    "tags": _string_list(task.metadata.get("tags")),
                     "has_skills": task.has_skills,
                     "skills_injected": _dataset_injects_skills(dataset) and task.has_skills,
+                    "verifier_log_path": VERIFIER_OUTPUT_LOG,
+                    "verifier_reward_dirs": [VERIFIER_DIR, TEST_LOGS_DIR],
                 },
             },
         )
@@ -268,6 +288,7 @@ class SkillsBenchBenchmarkService(BenchmarkService):
             "score": float(result.get("score") or 0.0),
             "resolved": bool(result.get("resolved")),
             "verifier_error": result.get("verifier_error"),
+            "verifier_log_tail": result.get("verifier_log_tail"),
             "metadata": result.get("metadata", {}),
         }
 
@@ -299,20 +320,60 @@ def _discover_tasks(tasks_dir: Path, task_set: Literal["default", "extra"]) -> d
         return {}
 
     tasks: dict[str, TaskSpec] = {}
-    for config_path in sorted(tasks_dir.glob("*/task.toml")):
-        task_dir = config_path.parent
-        instruction_path = task_dir / "instruction.md"
-        if not instruction_path.is_file():
+    for task_dir in sorted(path for path in tasks_dir.iterdir() if path.is_dir()):
+        task = _read_task_spec(task_dir, task_set)
+        if task is None:
             continue
-        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
-        tasks[task_dir.name] = TaskSpec(
+        tasks[task.task_id] = task
+    return tasks
+
+
+def _read_task_spec(task_dir: Path, task_set: Literal["default", "extra"]) -> TaskSpec | None:
+    config_path = task_dir / "task.toml"
+    instruction_path = task_dir / "instruction.md"
+    if config_path.is_file() and instruction_path.is_file():
+        return TaskSpec(
             task_id=task_dir.name,
             task_dir=task_dir,
             instruction=instruction_path.read_text(encoding="utf-8"),
-            config=config,
+            config=tomllib.loads(config_path.read_text(encoding="utf-8")),
             task_set=task_set,
         )
-    return tasks
+
+    task_markdown_path = task_dir / "task.md"
+    native_verifier_dir = task_dir / "verifier"
+    if not task_markdown_path.is_file() or not native_verifier_dir.is_dir():
+        return None
+
+    config, instruction = _read_task_markdown(task_markdown_path)
+    return TaskSpec(
+        task_id=task_dir.name,
+        task_dir=task_dir,
+        instruction=instruction,
+        config=config,
+        task_set=task_set,
+        verifier_dir_name="verifier",
+        remote_verifier_dir=NATIVE_VERIFIER_DIR,
+    )
+
+
+def _read_task_markdown(path: Path) -> tuple[dict[str, Any], str]:
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError(f"{path} must start with YAML frontmatter")
+
+    end_index = next((index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"), None)
+    if end_index is None:
+        raise ValueError(f"{path} has no closing YAML frontmatter marker")
+
+    frontmatter = "\n".join(lines[1:end_index])
+    body = "\n".join(lines[end_index + 1 :]).lstrip("\n")
+    config = yaml.safe_load(frontmatter) or {}
+    if not isinstance(config, dict):
+        raise ValueError(f"{path} frontmatter must be a YAML object")
+
+    return config, body
 
 
 def _get_task(dataset: dict[str, Any], task_id: str) -> TaskSpec:
@@ -434,11 +495,21 @@ def _dataset_injects_skills(dataset: str | None) -> bool:
     return dataset in {"with-skills", "extra-with-skills"}
 
 
-def _with_timeout(command: str, timeout_seconds: float | None) -> str:
-    """Wrap a verifier command in an in-container timeout when configured."""
-    if timeout_seconds is None:
-        return command
-    return f"timeout --kill-after=30s {math.ceil(timeout_seconds)}s bash -lc {shlex.quote(command)}"
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _verifier_command(remote_verifier_dir: str) -> str:
+    script_path = posixpath.join(remote_verifier_dir, "test.sh")
+    command = (
+        "set -o pipefail; "
+        f"mkdir -p {shlex.quote(VERIFIER_DIR)} {shlex.quote(TEST_LOGS_DIR)}; "
+        f"{{ chmod +x {shlex.quote(script_path)} && {shlex.quote(script_path)}; }} "
+        f"2>&1 | tee {shlex.quote(VERIFIER_OUTPUT_LOG)}"
+    )
+    return f"bash -lc {shlex.quote(command)}"
 
 
 def _upload_environment_assets_enabled() -> bool:
@@ -497,24 +568,25 @@ def _iter_files(source_dir: Path, *, excluded_prefixes: set[str], excluded_names
 
 
 async def _read_reward(sandbox: Sandbox) -> tuple[dict[str, Any], str | None]:
-    text_reward = await _download_optional(sandbox, f"{VERIFIER_DIR}/reward.txt")
-    if text_reward is not None:
-        try:
-            return {"reward": float(text_reward.decode("utf-8").strip())}, None
-        except ValueError as exc:
-            return {"reward": 0.0}, f"Could not parse reward.txt: {exc}"
+    for reward_dir in (VERIFIER_DIR, TEST_LOGS_DIR):
+        text_reward = await _download_optional(sandbox, f"{reward_dir}/reward.txt")
+        if text_reward is not None:
+            try:
+                return {"reward": float(text_reward.decode("utf-8").strip())}, None
+            except ValueError as exc:
+                return {"reward": 0.0}, f"Could not parse {reward_dir}/reward.txt: {exc}"
 
-    json_reward = await _download_optional(sandbox, f"{VERIFIER_DIR}/reward.json")
-    if json_reward is not None:
-        try:
-            payload = json.loads(json_reward.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            return {"reward": 0.0}, f"Could not parse reward.json: {exc}"
-        if isinstance(payload, dict):
-            return payload, None
-        return {"reward": 0.0}, "reward.json did not contain an object"
+        json_reward = await _download_optional(sandbox, f"{reward_dir}/reward.json")
+        if json_reward is not None:
+            try:
+                payload = json.loads(json_reward.decode("utf-8"))
+            except json.JSONDecodeError as exc:
+                return {"reward": 0.0}, f"Could not parse {reward_dir}/reward.json: {exc}"
+            if isinstance(payload, dict):
+                return payload, None
+            return {"reward": 0.0}, f"{reward_dir}/reward.json did not contain an object"
 
-    return {"reward": 0.0}, "No reward.txt or reward.json was produced by the verifier"
+    return {"reward": 0.0}, "No reward.txt or reward.json was produced under /logs/verifier or /logs/tests"
 
 
 async def _download_optional(sandbox: Sandbox, remote_path: str) -> bytes | None:
@@ -522,6 +594,20 @@ async def _download_optional(sandbox: Sandbox, remote_path: str) -> bytes | None
         return await sandbox.download_file(remote_path)
     except Exception:
         return None
+
+
+async def _read_remote_text_tail(sandbox: Sandbox, remote_path: str, max_bytes: int) -> str | None:
+    path = shlex.quote(remote_path)
+    try:
+        result = await sandbox.exec(f"test -f {path} && tail -c {max_bytes} {path} || true")
+    except Exception:
+        data = await _download_optional(sandbox, remote_path)
+        if data is None:
+            return None
+        return data[-max_bytes:].decode("utf-8", errors="replace")
+
+    output = getattr(result, "output", None)
+    return output if isinstance(output, str) and output else None
 
 
 def _coerce_reward(payload: dict[str, Any]) -> float:

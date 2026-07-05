@@ -6,27 +6,45 @@ from typing import Any
 
 import pytest
 
+from benchmark_service import ImageSource, Sandbox
+from benchmark_service.schemas import StreamResultChunk
 from skillsbench_valkyrie.service import SkillsBenchBenchmarkService
 
 
-class FakeSandbox:
-    id = "fake-sandbox"
-    name = "fake-sandbox"
-    state = "started"
-
-    def __init__(self) -> None:
-        self.files: dict[str, bytes] = {"/logs/verifier/reward.txt": b"1\n"}
+class FakeSandbox(Sandbox):
+    def __init__(self, *, command_error: Exception | None = None, reward: bytes | None = b"1\n") -> None:
+        self.files: dict[str, bytes] = {}
+        if reward is not None:
+            self.files["/logs/verifier/reward.txt"] = reward
         self.exec_commands: list[str] = []
         self.command_calls: list[tuple[str, str | None, float | None]] = []
+        self.command_error: Exception | None = command_error
+
+    @property
+    def id(self) -> str:
+        return "fake-sandbox"
+
+    @property
+    def name(self) -> str:
+        return "fake-sandbox"
+
+    @property
+    def state(self) -> str:
+        return "started"
 
     async def exec(self, command: str, *, cwd: str | None = None, timeout: float | None = None) -> Any:
         self.exec_commands.append(command)
-        return type("ExecResult", (), {"exit_code": 0, "output": ""})()
+        output = ""
+        if "tail -c" in command and "/logs/verifier/test_output.log" in command:
+            output = self.files.get("/logs/verifier/test_output.log", b"").decode("utf-8")
+        return type("ExecResult", (), {"exit_code": 0, "output": output})()
 
     async def command(
         self, command: str, *, cwd: str | None = None, timeout: float | None = None
     ) -> AsyncGenerator[str, None]:
         self.command_calls.append((command, cwd, timeout))
+        if self.command_error is not None:
+            raise self.command_error
         yield "tests passed\n"
 
     async def upload_file(self, remote_path: str, content: bytes) -> None:
@@ -53,6 +71,7 @@ version = "1.0"
 [metadata]
 difficulty = "easy"
 category = "programming"
+tags = ["hello", "fixture"]
 
 [agent]
 timeout_sec = 120.0
@@ -61,6 +80,7 @@ timeout_sec = 120.0
 timeout_sec = 60.0
 
 [environment]
+build_timeout_sec = 600.0
 cpus = 2
 memory_mb = 4096
 storage_mb = 10240
@@ -86,9 +106,10 @@ async def test_lists_and_retrieves_tasks(skillsbench_root: Path) -> None:
     tasks = await service.list_tasks("default")
     assert [task.id for task in tasks] == ["hello-world"]
     assert tasks[0].timeout == 120.0
-    assert tasks[0].has_skills is True
+    assert tasks[0].model_dump()["has_skills"] is True
 
     response = await service.retrieve_task("hello-world", dataset="default")
+    assert isinstance(response.source, ImageSource)
     assert response.source.image == "python:3.12-slim"
     assert response.problem_path == "/app/instruction.md"
     assert response.cwd == "/app"
@@ -104,7 +125,7 @@ async def test_setup_default_does_not_inject_skills(skillsbench_root: Path) -> N
 
     chunks = [chunk async for chunk in service.setup_task("hello-world", sandbox, dataset="default")]
 
-    assert chunks[-1].type == "result"
+    assert isinstance(chunks[-1], StreamResultChunk)
     assert chunks[-1].data["skills_dir"] is None
     assert sandbox.files["/app/instruction.md"].startswith(b"Create hello.txt")
     assert "/tmp/skillsbench-skills.tar.gz" not in sandbox.files
@@ -117,7 +138,7 @@ async def test_setup_with_skills_injects_skills(skillsbench_root: Path) -> None:
 
     chunks = [chunk async for chunk in service.setup_task("hello-world", sandbox, dataset="with-skills")]
 
-    assert chunks[-1].type == "result"
+    assert isinstance(chunks[-1], StreamResultChunk)
     assert chunks[-1].data["skills_dir"] == "/skills"
     assert "/tmp/skillsbench-skills.tar.gz" in sandbox.files
 
@@ -128,14 +149,89 @@ async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
 
     chunks = [chunk async for chunk in service.evaluate_instance("hello-world", sandbox, dataset="default")]
 
+    assert isinstance(chunks[-1], StreamResultChunk)
     result = chunks[-1].data
     assert result["score"] == 1.0
     assert result["resolved"] is True
     assert result["verifier_error"] is None
+    assert result["metadata"]["difficulty"] == "easy"
+    assert result["metadata"]["tags"] == ["hello", "fixture"]
     assert "/tmp/skillsbench-tests.tar.gz" in sandbox.files
-    assert sandbox.command_calls[0][0].startswith("timeout --kill-after=30s 60s bash -lc")
+    assert not sandbox.command_calls[0][0].startswith("timeout ")
+    assert sandbox.command_calls[0][0].startswith("bash -lc ")
+    assert "set -o pipefail" in sandbox.command_calls[0][0]
+    assert "/tests/test.sh" in sandbox.command_calls[0][0]
+    assert "tee /logs/verifier/test_output.log" in sandbox.command_calls[0][0]
+    assert "mkdir -p /logs/verifier /logs/tests" in sandbox.command_calls[0][0]
     assert sandbox.command_calls[0][1] == "/app"
-    assert sandbox.command_calls[0][2] == 60.0
+    assert sandbox.command_calls[0][2] is None
+    assert result["metadata"]["verifier_reward_dirs"] == ["/logs/verifier", "/logs/tests"]
+
+
+async def test_native_task_markdown_uses_verifier_directory(skillsbench_root: Path) -> None:
+    task = skillsbench_root / "tasks" / "native-task"
+    (task / "environment").mkdir(parents=True)
+    (task / "verifier").mkdir()
+    (task / "task.md").write_text(
+        """---
+metadata:
+  category: software-engineering
+  difficulty: medium
+  tags:
+    - native
+    - verifier
+agent:
+  timeout_sec: 90.0
+verifier:
+  timeout_sec: 45.0
+environment:
+  cpus: 1
+  memory_mb: 1024
+---
+
+Create the native task output.
+""",
+        encoding="utf-8",
+    )
+    (task / "environment" / "Dockerfile").write_text("FROM python:3.12-slim\nWORKDIR /work\n", encoding="utf-8")
+    (task / "verifier" / "test.sh").write_text("#!/bin/bash\necho 1 > /logs/verifier/reward.txt\n", encoding="utf-8")
+
+    service = await SkillsBenchBenchmarkService.create()
+    sandbox = FakeSandbox(reward=None)
+    sandbox.files["/logs/tests/reward.txt"] = b"1\n"
+
+    tasks = await service.list_tasks("default")
+    assert {task.id for task in tasks} == {"hello-world", "native-task"}
+
+    response = await service.retrieve_task("native-task", dataset="default")
+    assert response.problem_path == "/work/instruction.md"
+    assert response.agent_timeout == 90.0
+
+    chunks = [chunk async for chunk in service.evaluate_instance("native-task", sandbox, dataset="default")]
+
+    assert isinstance(chunks[-1], StreamResultChunk)
+    assert chunks[-1].data["score"] == 1.0
+    assert chunks[-1].data["metadata"]["difficulty"] == "medium"
+    assert chunks[-1].data["metadata"]["tags"] == ["native", "verifier"]
+    assert any("tar -xzf /tmp/skillsbench-tests.tar.gz -C /verifier" in command for command in sandbox.exec_commands)
+    assert "/verifier/test.sh" in sandbox.command_calls[0][0]
+    assert sandbox.command_calls[0][2] is None
+
+
+async def test_evaluate_instance_reports_verifier_log_tail(skillsbench_root: Path) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    sandbox = FakeSandbox(command_error=RuntimeError("boom"), reward=b"1\n")
+    sandbox.files["/logs/verifier/test_output.log"] = b"setup started\nlast verifier line\n"
+
+    chunks = [chunk async for chunk in service.evaluate_instance("hello-world", sandbox, dataset="default")]
+
+    assert isinstance(chunks[-1], StreamResultChunk)
+    result = chunks[-1].data
+    assert result["score"] == 1.0
+    assert result["resolved"] is True
+    assert result["verifier_error"] == "RuntimeError: boom"
+    assert result["verifier_log_tail"] == "setup started\nlast verifier line\n"
+    assert result["metadata"]["verifier_log_path"] == "/logs/verifier/test_output.log"
 
 
 async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
@@ -150,7 +246,17 @@ async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
             },
             "b": {
                 "status": "evaluated",
-                "result": {"score": 0.5, "metadata": {"category": "math", "duration_seconds": 20.0, "cost": 2.5}},
+                "result": {
+                    "score": 0.5,
+                    "metadata": {
+                        "category": "math",
+                        "difficulty": "hard",
+                        "tags": ["algebra"],
+                        "verifier_reward_dirs": ["/logs/verifier", "/logs/tests"],
+                        "duration_seconds": 20.0,
+                        "cost": 2.5,
+                    },
+                },
             },
             "c": None,
         },
@@ -179,4 +285,11 @@ async def test_final_score_uses_mean_reward(skillsbench_root: Path) -> None:
     assert result.metadata["tasks"][0]["status"] == "evaluated"
     assert result.metadata["tasks"][0]["scores"]["score"]["value"] == 100.0
     assert result.metadata["tasks"][1]["extra"]["skillsbench"]["category"] == "math"
+    assert result.metadata["tasks"][1]["extra"]["skillsbench"]["difficulty"] == "hard"
+    assert result.metadata["tasks"][1]["extra"]["skillsbench"]["tags"] == ["algebra"]
+    assert result.metadata["tasks"][1]["extra"]["skillsbench"]["verifier_reward_dirs"] == [
+        "/logs/verifier",
+        "/logs/tests",
+    ]
+    assert result.metadata["tasks"][1]["tags"] == ["algebra"]
     assert result.metadata["tasks"][2]["status"] == "error"
