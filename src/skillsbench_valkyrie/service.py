@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
+import logging
 import math
 import os
 import posixpath
@@ -12,24 +14,39 @@ import re
 import shlex
 import tarfile
 import tomllib
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
+from uuid import uuid4
 
 import yaml  # type: ignore[import-untyped]
-from benchmark_service import BenchmarkService, ImageSource, Resources, Sandbox, SnapshotSource
+from benchmark_service import (
+    BenchmarkService,
+    DaytonaProviderConfig,
+    ImageSource,
+    Resources,
+    Sandbox,
+    SandboxCreateRequest,
+    SandboxError,
+    SnapshotSource,
+)
+from benchmark_service.sandbox.daytona import DaytonaSandbox
 from benchmark_service.schemas import (
     EvaluateResponseRequest,
     FinalScoreResult,
     RetrieveTaskResponse,
     StreamChunk,
+    StreamEvalResumeStateChunk,
     StreamMessageChunk,
     StreamResultChunk,
 )
 from benchmark_service.v1_schemas import V1Task
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .vals_helper import bounded_score, build_final_score_metadata
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT_ENV = "SKILLSBENCH_REPO_ROOT"
 IMAGE_MANIFEST_ENV = "SKILLSBENCH_VALKYRIE_IMAGE_MANIFEST"
@@ -47,8 +64,61 @@ VERIFIER_DIR = "/logs/verifier"
 TEST_LOGS_DIR = "/logs/tests"
 VERIFIER_OUTPUT_LOG = f"{VERIFIER_DIR}/test_output.log"
 VERIFIER_LOG_TAIL_BYTES = 12000
+EVAL_SNAPSHOT_PREFIX = "sb-eval-resume-v1"
+EVAL_SNAPSHOT_TIMEOUT_SECONDS = 600
+EVAL_SANDBOX_AUTO_STOP_MINUTES = 15
+EVAL_SANDBOX_CREATE_TIMEOUT_SECONDS = 600
 
 _WORKDIR_RE = re.compile(r"^\s*WORKDIR\s+(.+?)\s*$", re.IGNORECASE)
+
+
+def _task_binding(task_id: str, dataset: str) -> str:
+    identity = json.dumps([dataset, task_id], separators=(",", ":"))
+    return hashlib.sha256(identity.encode()).hexdigest()[:12]
+
+
+def _snapshot_name(task_id: str, dataset: str, nonce: str) -> str:
+    return f"{EVAL_SNAPSHOT_PREFIX}-{_task_binding(task_id, dataset)}-{nonce}"
+
+
+class EvalResumeState(BaseModel):
+    """Task-bound pointer to a durable post-agent filesystem snapshot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal[1] = 1
+    task_id: str = Field(min_length=1)
+    dataset: str = Field(min_length=1)
+    snapshot: str = Field(pattern=rf"^{EVAL_SNAPSHOT_PREFIX}-[0-9a-f]{{12}}-[0-9a-f]{{32}}$")
+
+    @classmethod
+    def create(cls, task_id: str, dataset: str) -> EvalResumeState:
+        return cls(task_id=task_id, dataset=dataset, snapshot=_snapshot_name(task_id, dataset, uuid4().hex))
+
+    @model_validator(mode="after")
+    def require_task_bound_snapshot(self) -> EvalResumeState:
+        nonce = self.snapshot.rsplit("-", 1)[-1]
+        if self.snapshot != _snapshot_name(self.task_id, self.dataset, nonce):
+            raise ValueError("eval_resume_state snapshot is not canonical for its task and dataset")
+        return self
+
+
+def _resume_sandbox_name(state: EvalResumeState) -> str:
+    return f"sb-eval-run-v1-{_task_binding(state.task_id, state.dataset)}-{uuid4().hex}"
+
+
+async def create_daytona_snapshot(sandbox: Sandbox, snapshot_name: str) -> None:
+    """Use Daytona's filesystem snapshot hook until CBS exposes one."""
+    if not isinstance(sandbox, DaytonaSandbox):
+        raise ValueError("SkillsBench eval resume requires a Daytona sandbox")
+
+    inner = getattr(sandbox, "_sandbox", None)
+    create_snapshot = getattr(inner, "_experimental_create_snapshot", None)
+    if not callable(create_snapshot):
+        raise SandboxError("The installed Daytona SDK does not support filesystem snapshots")
+
+    snapshot_creator = cast(Callable[..., Awaitable[None]], create_snapshot)
+    await snapshot_creator(snapshot_name, timeout=EVAL_SNAPSHOT_TIMEOUT_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -214,12 +284,81 @@ class SkillsBenchBenchmarkService(BenchmarkService):
     async def evaluate_response(self, request: EvaluateResponseRequest, dataset: str | None = None) -> Any:
         raise ValueError("SkillsBench tasks require sandbox evaluation through evaluate_instance().")
 
+    async def stream_evaluate_response(
+        self, request: EvaluateResponseRequest, dataset: str | None = None
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Resume verification in a fresh sandbox from a durable Daytona snapshot."""
+        if request.response is not None or request.eval_resume_state is None:
+            raise ValueError("SkillsBench eval resume requires eval_resume_state")
+
+        state = EvalResumeState.model_validate(request.eval_resume_state)
+        requested_dataset = dataset or request.dataset or "default"
+        if dataset is not None and request.dataset is not None and dataset != request.dataset:
+            raise ValueError(f"request dataset mismatch: {request.dataset} != {dataset}")
+        if state.task_id != request.task_id:
+            raise ValueError(f"eval_resume_state task_id mismatch: {state.task_id} != {request.task_id}")
+        if state.dataset != requested_dataset:
+            raise ValueError(f"eval_resume_state dataset mismatch: {state.dataset} != {requested_dataset}")
+        if request.sandbox_provider is None:
+            raise ValueError("SkillsBench eval resume requires sandbox_provider")
+        if not isinstance(request.sandbox_provider, DaytonaProviderConfig):
+            raise ValueError("SkillsBench eval resume requires a Daytona sandbox_provider")
+
+        await self.validate_task_ids([request.task_id], dataset=requested_dataset)
+        task = _get_task(self.get_dataset(requested_dataset), request.task_id)
+        entry = _manifest_task_entry(_load_image_manifest(), request.task_id)
+        cwd = _task_cwd(task, entry)
+        yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
+
+        async with request.sandbox_provider.create_provider() as provider:
+            sandbox = await provider.create_sandbox(
+                SandboxCreateRequest(
+                    source=SnapshotSource(snapshot=state.snapshot),
+                    resources=_resources(task, entry),
+                    name=_resume_sandbox_name(state),
+                    labels={
+                        "Benchmark": "skillsbench",
+                        "Task": state.task_id,
+                        "Dataset": state.dataset,
+                        "EvalResume": "true",
+                    },
+                    env_vars={},
+                    auto_stop_interval=EVAL_SANDBOX_AUTO_STOP_MINUTES,
+                    create_timeout=EVAL_SANDBOX_CREATE_TIMEOUT_SECONDS,
+                )
+            )
+            try:
+                async for chunk in self._run_verifier(request.task_id, task, cwd, sandbox, requested_dataset):
+                    yield chunk
+            finally:
+                try:
+                    await provider.delete_sandbox(sandbox.id)
+                except Exception:
+                    logger.exception("Failed to delete SkillsBench eval-resume sandbox %s", sandbox.id)
+
     async def evaluate_instance(
         self, task_id: str, sandbox: Sandbox, dataset: str | None = None
     ) -> AsyncGenerator[StreamChunk, None]:
         task = _get_task(self.get_dataset(dataset), task_id)
         entry = _manifest_task_entry(_load_image_manifest(), task_id)
         cwd = _task_cwd(task, entry)
+
+        state = EvalResumeState.create(task_id, dataset or "default")
+        await create_daytona_snapshot(sandbox, state.snapshot)
+        yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
+
+        async for chunk in self._run_verifier(task_id, task, cwd, sandbox, dataset):
+            yield chunk
+
+    async def _run_verifier(
+        self,
+        task_id: str,
+        task: TaskSpec,
+        cwd: str,
+        sandbox: Sandbox,
+        dataset: str | None,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Run the existing verifier body without creating another checkpoint."""
 
         yield StreamMessageChunk(type="message", data=f"Evaluating SkillsBench task {task_id}")
         await sandbox.exec(f"mkdir -p {shlex.quote(VERIFIER_DIR)} {shlex.quote(TEST_LOGS_DIR)}")

@@ -2,31 +2,59 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
-from benchmark_service import ImageSource, Sandbox
-from benchmark_service.schemas import StreamResultChunk
-from skillsbench_valkyrie.service import SkillsBenchBenchmarkService
+from benchmark_service import (
+    DaytonaProviderConfig,
+    ImageSource,
+    ModalProviderConfig,
+    Sandbox,
+    SandboxCreateRequest,
+    SandboxError,
+    SandboxProvider,
+    SandboxQuery,
+    SnapshotSource,
+)
+from benchmark_service.sandbox.daytona import DaytonaSandbox
+from benchmark_service.schemas import EvaluateResponseRequest, StreamResultChunk
+from pydantic import ValidationError
+from skillsbench_valkyrie import service as service_module
+from skillsbench_valkyrie.service import (
+    EVAL_SNAPSHOT_TIMEOUT_SECONDS,
+    EvalResumeState,
+    SkillsBenchBenchmarkService,
+    create_daytona_snapshot,
+)
 
 
 class FakeSandbox(Sandbox):
-    def __init__(self, *, command_error: Exception | None = None, reward: bytes | None = b"1\n") -> None:
+    def __init__(
+        self,
+        *,
+        sandbox_id: str = "fake-sandbox",
+        exec_error: Exception | None = None,
+        command_error: Exception | None = None,
+        reward: bytes | None = b"1\n",
+    ) -> None:
+        self.sandbox_id = sandbox_id
         self.files: dict[str, bytes] = {}
         if reward is not None:
             self.files["/logs/verifier/reward.txt"] = reward
         self.exec_commands: list[str] = []
         self.command_calls: list[tuple[str, str | None, float | None]] = []
+        self.exec_error = exec_error
         self.command_error: Exception | None = command_error
 
     @property
     def id(self) -> str:
-        return "fake-sandbox"
+        return self.sandbox_id
 
     @property
     def name(self) -> str:
-        return "fake-sandbox"
+        return self.sandbox_id
 
     @property
     def state(self) -> str:
@@ -34,6 +62,8 @@ class FakeSandbox(Sandbox):
 
     async def exec(self, command: str, *, cwd: str | None = None, timeout: float | None = None) -> Any:
         self.exec_commands.append(command)
+        if self.exec_error is not None:
+            raise self.exec_error
         output = ""
         if "tail -c" in command and "/logs/verifier/test_output.log" in command:
             output = self.files.get("/logs/verifier/test_output.log", b"").decode("utf-8")
@@ -54,6 +84,35 @@ class FakeSandbox(Sandbox):
         if remote_path not in self.files:
             raise FileNotFoundError(remote_path)
         return self.files[remote_path]
+
+
+class FakeProvider(SandboxProvider):
+    def __init__(self, sandbox: Sandbox) -> None:
+        self.sandbox = sandbox
+        self.create_request: SandboxCreateRequest | None = None
+        self.deleted: list[str] = []
+        self.closed = False
+
+    async def create_sandbox(self, request: SandboxCreateRequest) -> Sandbox:
+        self.create_request = request
+        return self.sandbox
+
+    async def get_sandbox(self, instance_id: str) -> Sandbox:
+        raise AssertionError("resume must create a fresh sandbox")
+
+    async def delete_sandbox(self, instance_id: str) -> None:
+        self.deleted.append(instance_id)
+
+    async def list_sandboxes(self, query: SandboxQuery) -> AsyncGenerator[Sandbox, None]:
+        if False:
+            yield self.sandbox
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _daytona_config() -> DaytonaProviderConfig:
+    return DaytonaProviderConfig(DAYTONA_API_KEY="key", DAYTONA_API_URL="url", DAYTONA_TARGET="target")
 
 
 @pytest.fixture
@@ -97,6 +156,11 @@ storage_mb = 10240
     monkeypatch.setenv("SKILLSBENCH_REPO_ROOT", str(root))
     monkeypatch.delenv("SKILLSBENCH_VALKYRIE_IMAGE_MANIFEST", raising=False)
     monkeypatch.delenv("SKILLSBENCH_VALKYRIE_DEFAULT_IMAGE", raising=False)
+
+    async def create_snapshot(_sandbox: Sandbox, _snapshot_name: str) -> None:
+        pass
+
+    monkeypatch.setattr(service_module, "create_daytona_snapshot", create_snapshot)
     return root
 
 
@@ -143,6 +207,32 @@ async def test_setup_with_skills_injects_skills(skillsbench_root: Path) -> None:
     assert "/tmp/skillsbench-skills.tar.gz" in sandbox.files
 
 
+async def test_checkpoint_is_emitted_before_verifier_setup_failure(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    sandbox = FakeSandbox(exec_error=RuntimeError("verifier setup failed"))
+    snapshot_calls: list[str] = []
+
+    async def create_snapshot(_sandbox: Sandbox, snapshot_name: str) -> None:
+        assert sandbox.exec_commands == []
+        snapshot_calls.append(snapshot_name)
+
+    monkeypatch.setattr(service_module, "create_daytona_snapshot", create_snapshot)
+    chunks = []
+    with pytest.raises(RuntimeError, match="verifier setup failed"):
+        async for chunk in service.evaluate_instance("hello-world", sandbox, dataset="default"):
+            chunks.append(chunk)
+
+    assert [chunk.type for chunk in chunks] == ["eval_resume_state", "message"]
+    state = EvalResumeState.model_validate(chunks[0].data)
+    assert state.version == 1
+    assert state.task_id == "hello-world"
+    assert state.dataset == "default"
+    assert snapshot_calls == [state.snapshot]
+    assert sandbox.exec_commands == ["mkdir -p /logs/verifier /logs/tests"]
+
+
 async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
     service = await SkillsBenchBenchmarkService.create()
     sandbox = FakeSandbox()
@@ -166,6 +256,143 @@ async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
     assert sandbox.command_calls[0][1] == "/app"
     assert sandbox.command_calls[0][2] is None
     assert result["metadata"]["verifier_reward_dirs"] == ["/logs/verifier", "/logs/tests"]
+
+
+async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    fresh = FakeSandbox(sandbox_id="resume-sandbox")
+    provider = FakeProvider(fresh)
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", lambda _config: provider)
+
+    async def forbidden_setup(*_args: object, **_kwargs: object) -> AsyncGenerator[Any, None]:
+        raise AssertionError("setup_task must not run when resuming a filesystem snapshot")
+        yield
+
+    monkeypatch.setattr(service, "setup_task", forbidden_setup)
+    state = EvalResumeState.create("hello-world", "default")
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=state.model_dump(mode="json"),
+        sandbox_provider=_daytona_config(),
+    )
+
+    chunks = [chunk async for chunk in service.stream_evaluate_response(request)]
+
+    assert chunks[0].type == "eval_resume_state"
+    assert chunks[0].data == state.model_dump(mode="json")
+    assert isinstance(chunks[-1], StreamResultChunk)
+    assert chunks[-1].data["score"] == 1.0
+    assert sum(chunk.type == "eval_resume_state" for chunk in chunks) == 1
+    assert provider.create_request is not None
+    assert provider.create_request.source == SnapshotSource(snapshot=state.snapshot)
+    assert provider.create_request.name.startswith("sb-eval-run-v1-")
+    assert provider.create_request.labels["EvalResume"] == "true"
+    assert fresh.command_calls
+    assert "/app/instruction.md" not in fresh.files
+    assert "/tmp/skillsbench-env-assets.tar.gz" not in fresh.files
+    assert provider.deleted == [fresh.id]
+    assert provider.closed is True
+
+
+@pytest.mark.parametrize(
+    ("request_task_id", "request_dataset", "error"),
+    [
+        ("different-task", None, "task_id mismatch"),
+        ("hello-world", "with-skills", "dataset mismatch"),
+    ],
+)
+async def test_resume_rejects_task_or_dataset_mismatch(
+    skillsbench_root: Path,
+    request_task_id: str,
+    request_dataset: str | None,
+    error: str,
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    state = EvalResumeState.create("hello-world", "default")
+    request = EvaluateResponseRequest(
+        task_id=request_task_id,
+        dataset=request_dataset,
+        eval_resume_state=state.model_dump(mode="json"),
+    )
+
+    with pytest.raises(ValueError, match=error):
+        _ = [chunk async for chunk in service.stream_evaluate_response(request, dataset=request_dataset)]
+
+
+@pytest.mark.parametrize(
+    "invalid_fields",
+    [
+        {"version": 2},
+        {"snapshot": "unrelated-snapshot"},
+        {"snapshot": f"sb-eval-resume-v1-{'0' * 12}-{'1' * 32}"},
+        {"unexpected": True},
+    ],
+)
+async def test_resume_rejects_malformed_state(skillsbench_root: Path, invalid_fields: dict[str, Any]) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")
+    state.update(invalid_fields)
+    request = EvaluateResponseRequest(task_id="hello-world", eval_resume_state=state)
+
+    with pytest.raises(ValidationError):
+        _ = [chunk async for chunk in service.stream_evaluate_response(request)]
+
+
+async def test_resume_requires_daytona_provider(skillsbench_root: Path) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")
+
+    without_provider = EvaluateResponseRequest(task_id="hello-world", eval_resume_state=state)
+    with pytest.raises(ValueError, match="requires sandbox_provider"):
+        _ = [chunk async for chunk in service.stream_evaluate_response(without_provider)]
+
+    wrong_provider = EvaluateResponseRequest(
+        task_id="hello-world", eval_resume_state=state, sandbox_provider=ModalProviderConfig()
+    )
+    with pytest.raises(ValueError, match="Daytona sandbox_provider"):
+        _ = [chunk async for chunk in service.stream_evaluate_response(wrong_provider)]
+
+
+async def test_resume_deletes_temporary_sandbox_after_verifier_failure(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    fresh = FakeSandbox(sandbox_id="resume-sandbox", exec_error=RuntimeError("resumed verifier failed"))
+    provider = FakeProvider(fresh)
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", lambda _config: provider)
+    state = EvalResumeState.create("hello-world", "default")
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=state.model_dump(mode="json"),
+        sandbox_provider=_daytona_config(),
+    )
+
+    with pytest.raises(RuntimeError, match="resumed verifier failed"):
+        _ = [chunk async for chunk in service.stream_evaluate_response(request)]
+
+    assert provider.deleted == [fresh.id]
+    assert provider.closed is True
+
+
+async def test_snapshot_adapter_is_guarded_and_calls_daytona_hook() -> None:
+    with pytest.raises(ValueError, match="Daytona sandbox"):
+        await create_daytona_snapshot(FakeSandbox(), "snapshot")
+
+    calls: list[tuple[str, int]] = []
+
+    async def create_snapshot(name: str, timeout: int) -> None:
+        calls.append((name, timeout))
+
+    sandbox = DaytonaSandbox(cast(Any, SimpleNamespace(_experimental_create_snapshot=create_snapshot)))
+    await create_daytona_snapshot(sandbox, "snapshot")
+
+    assert calls == [("snapshot", EVAL_SNAPSHOT_TIMEOUT_SECONDS)]
+
+    unsupported = DaytonaSandbox(cast(Any, SimpleNamespace()))
+    with pytest.raises(SandboxError, match="does not support filesystem snapshots"):
+        await create_daytona_snapshot(unsupported, "snapshot")
 
 
 async def test_native_task_markdown_uses_verifier_directory(skillsbench_root: Path) -> None:
