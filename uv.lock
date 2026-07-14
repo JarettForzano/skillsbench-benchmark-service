@@ -362,7 +362,7 @@ wheels = [
 [[package]]
 name = "create-benchmark-service"
 version = "0.9.0"
-source = { git = "https://github.com/vals-ai/create-benchmark-service.git#141d19a0f33ecb2560af67f3f1ca2ea158e9c584" }
+source = { git = "https://github.com/vals-ai/create-benchmark-service.git?tag=v0.9.0#141d19a0f33ecb2560af67f3f1ca2ea158e9c584" }
 dependencies = [
     { name = "cachetools" },
     { name = "click" },
@@ -1838,7 +1838,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "create-benchmark-service", git = "https://github.com/vals-ai/create-benchmark-service.git" },
+    { name = "create-benchmark-service", git = "https://github.com/vals-ai/create-benchmark-service.git?tag=v0.9.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
