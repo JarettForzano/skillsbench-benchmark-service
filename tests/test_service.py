@@ -340,6 +340,34 @@ async def test_resume_rejects_malformed_state(skillsbench_root: Path, invalid_fi
         _ = [chunk async for chunk in service.stream_evaluate_response(request)]
 
 
+@pytest.mark.parametrize("version", [True, 1.0])
+async def test_resume_rejects_non_exact_integer_version_before_checkpoint_or_provider(
+    skillsbench_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: object,
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")
+    state["version"] = version
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=state,
+        sandbox_provider=_daytona_config(),
+    )
+    chunks = []
+
+    def forbidden_provider(_config: DaytonaProviderConfig) -> SandboxProvider:
+        raise AssertionError("invalid resume state must not create a provider")
+
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", forbidden_provider)
+
+    with pytest.raises(ValidationError):
+        async for chunk in service.stream_evaluate_response(request):
+            chunks.append(chunk)
+
+    assert chunks == []
+
+
 async def test_resume_requires_daytona_provider(skillsbench_root: Path) -> None:
     service = await SkillsBenchBenchmarkService.create()
     state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")

@@ -42,7 +42,7 @@ from benchmark_service.schemas import (
     StreamResultChunk,
 )
 from benchmark_service.v1_schemas import V1Task
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .vals_helper import bounded_score, build_final_score_metadata
 
@@ -90,6 +90,13 @@ class EvalResumeState(BaseModel):
     task_id: str = Field(min_length=1)
     dataset: str = Field(min_length=1)
     snapshot: str = Field(pattern=rf"^{EVAL_SNAPSHOT_PREFIX}-[0-9a-f]{{12}}-[0-9a-f]{{32}}$")
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_exact_version(cls, value: object) -> int:
+        if type(value) is not int:
+            raise ValueError("eval_resume_state version must be exact integer 1")
+        return value
 
     @classmethod
     def create(cls, task_id: str, dataset: str) -> EvalResumeState:
