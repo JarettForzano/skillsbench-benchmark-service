@@ -25,6 +25,7 @@ jobs:
       VALKYRIE_AWS_ROLE_ARN: ${{ secrets.VALKYRIE_AWS_ROLE_ARN }}
       NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       NGROK_URL: ${{ secrets.NGROK_URL }}
+      NGROK_PUBLIC_URL: ${{ secrets.NGROK_PUBLIC_URL }}
       SMOKE_DATASET: ${{ secrets.SMOKE_DATASET }}
       SMOKE_TASK_ID: ${{ secrets.SMOKE_TASK_ID }}
       SMOKE_AGENT: ${{ secrets.SMOKE_AGENT }}
