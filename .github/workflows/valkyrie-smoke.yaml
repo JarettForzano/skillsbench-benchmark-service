@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - prod
+      - jf/benchmark-smoke-workflow
   workflow_dispatch:
     inputs:
       model:
