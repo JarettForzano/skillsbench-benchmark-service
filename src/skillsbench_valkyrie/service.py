@@ -13,8 +13,10 @@ import posixpath
 import re
 import shlex
 import tarfile
+import time
 import tomllib
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -29,6 +31,7 @@ from benchmark_service import (
     Sandbox,
     SandboxCreateRequest,
     SandboxError,
+    SandboxProvider,
     SnapshotSource,
 )
 from benchmark_service.sandbox.daytona import DaytonaSandbox
@@ -65,7 +68,9 @@ TEST_LOGS_DIR = "/logs/tests"
 VERIFIER_OUTPUT_LOG = f"{VERIFIER_DIR}/test_output.log"
 VERIFIER_LOG_TAIL_BYTES = 12000
 EVAL_SNAPSHOT_PREFIX = "sb-eval-resume-v1"
+EVAL_SNAPSHOT_TIMESTAMP_MARKER = "t"
 EVAL_SNAPSHOT_TIMEOUT_SECONDS = 600
+EVAL_SNAPSHOT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 EVAL_SANDBOX_AUTO_STOP_MINUTES = 15
 EVAL_SANDBOX_CREATE_TIMEOUT_SECONDS = 600
 
@@ -89,7 +94,7 @@ class EvalResumeState(BaseModel):
     version: Literal[1] = 1
     task_id: str = Field(min_length=1)
     dataset: str = Field(min_length=1)
-    snapshot: str = Field(pattern=rf"^{EVAL_SNAPSHOT_PREFIX}-[0-9a-f]{{12}}-[0-9a-f]{{32}}$")
+    snapshot: str = Field(pattern=rf"^{EVAL_SNAPSHOT_PREFIX}-[0-9a-f]{{12}}-(?:[0-9a-f]{{32}}|t[0-9a-f]{{31}})$")
 
     @field_validator("version", mode="before")
     @classmethod
@@ -100,7 +105,8 @@ class EvalResumeState(BaseModel):
 
     @classmethod
     def create(cls, task_id: str, dataset: str) -> EvalResumeState:
-        return cls(task_id=task_id, dataset=dataset, snapshot=_snapshot_name(task_id, dataset, uuid4().hex))
+        nonce = f"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}{int(time.time()):08x}{uuid4().hex[:23]}"
+        return cls(task_id=task_id, dataset=dataset, snapshot=_snapshot_name(task_id, dataset, nonce))
 
     @model_validator(mode="after")
     def require_task_bound_snapshot(self) -> EvalResumeState:
@@ -114,6 +120,69 @@ def _resume_sandbox_name(state: EvalResumeState) -> str:
     return f"sb-eval-run-v1-{_task_binding(state.task_id, state.dataset)}-{uuid4().hex}"
 
 
+def _snapshot_created_at(snapshot_name: str) -> int | None:
+    if not snapshot_name.startswith(f"{EVAL_SNAPSHOT_PREFIX}-"):
+        return None
+    nonce = snapshot_name.rsplit("-", 1)[-1]
+    if not re.fullmatch(rf"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}[0-9a-f]{{31}}", nonce):
+        return None
+    try:
+        return int(nonce[1:9], 16)
+    except ValueError:
+        return None
+
+
+async def cleanup_expired_daytona_snapshots(provider: object, now_seconds: int | None = None) -> None:
+    """Delete only expired snapshots owned by SkillsBench eval-resume."""
+    daytona = cast(Any, getattr(provider, "_daytona", None))
+    snapshot_service = getattr(daytona, "snapshot", None)
+    cutoff = (now_seconds or int(time.time())) - EVAL_SNAPSHOT_RETENTION_SECONDS
+    page = 1
+    expired: list[Any] = []
+    if snapshot_service is not None:
+        while True:
+            result = await snapshot_service.list(page=page, limit=100)
+            expired.extend(
+                snapshot
+                for snapshot in result.items
+                if (created_at := _snapshot_created_at(snapshot.name)) is not None and created_at < cutoff
+            )
+            if page >= result.total_pages:
+                break
+            page += 1
+        for snapshot in expired:
+            await snapshot_service.delete(snapshot)
+        return
+
+    if not isinstance(provider, DaytonaSandbox):
+        return
+    inner = getattr(provider, "_sandbox", None)
+    sandbox_api = getattr(inner, "_sandbox_api", None)
+    api_client = getattr(sandbox_api, "api_client", None)
+    if api_client is None:
+        return
+
+    from daytona_api_client_async import SnapshotsApi
+
+    snapshots = SnapshotsApi(api_client)
+    while True:
+        result = await snapshots.get_all_snapshots(
+            page=page,
+            limit=100,
+            name=f"{EVAL_SNAPSHOT_PREFIX}-",
+        )
+        expired.extend(
+            snapshot
+            for snapshot in result.items
+            if (created_at := _snapshot_created_at(snapshot.name)) is not None and created_at < cutoff
+        )
+        if page >= result.total_pages:
+            break
+        page += 1
+    for snapshot in expired:
+        await snapshots.remove_snapshot(snapshot.id)
+
+
 async def create_daytona_snapshot(sandbox: Sandbox, snapshot_name: str) -> None:
     """Use Daytona's filesystem snapshot hook until CBS exposes one."""
     if not isinstance(sandbox, DaytonaSandbox):
@@ -125,7 +194,43 @@ async def create_daytona_snapshot(sandbox: Sandbox, snapshot_name: str) -> None:
         raise SandboxError("The installed Daytona SDK does not support filesystem snapshots")
 
     snapshot_creator = cast(Callable[..., Awaitable[None]], create_snapshot)
-    await snapshot_creator(snapshot_name, timeout=EVAL_SNAPSHOT_TIMEOUT_SECONDS)
+    try:
+        await snapshot_creator(snapshot_name, timeout=EVAL_SNAPSHOT_TIMEOUT_SECONDS)
+    except (Exception, asyncio.CancelledError):
+        sandbox_api = getattr(inner, "_sandbox_api", None)
+        api_client = getattr(sandbox_api, "api_client", None)
+        if api_client is not None:
+            with suppress(Exception):
+                from daytona_api_client_async import SnapshotsApi
+
+                snapshots = SnapshotsApi(api_client)
+                snapshot = await snapshots.get_snapshot(snapshot_name)
+                await snapshots.remove_snapshot(snapshot.id)
+        raise
+
+
+async def _delete_owned_sandbox(provider: SandboxProvider, sandbox_id: str) -> None:
+    cleanup = asyncio.create_task(provider.delete_sandbox(sandbox_id))
+    try:
+        await asyncio.shield(cleanup)
+    except asyncio.CancelledError:
+        await asyncio.shield(cleanup)
+        raise
+    except Exception:
+        logger.exception("Failed to delete SkillsBench eval-resume sandbox %s", sandbox_id)
+
+
+async def _create_owned_sandbox(
+    provider: SandboxProvider,
+    request: SandboxCreateRequest,
+) -> Sandbox:
+    creation = asyncio.create_task(provider.create_sandbox(request))
+    try:
+        return await asyncio.shield(creation)
+    except asyncio.CancelledError:
+        sandbox = await asyncio.shield(creation)
+        await _delete_owned_sandbox(provider, sandbox.id)
+        raise
 
 
 @dataclass(frozen=True)
@@ -318,7 +423,12 @@ class SkillsBenchBenchmarkService(BenchmarkService):
         yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
 
         async with request.sandbox_provider.create_provider() as provider:
-            sandbox = await provider.create_sandbox(
+            try:
+                await cleanup_expired_daytona_snapshots(provider)
+            except Exception:
+                logger.exception("Failed to clean expired SkillsBench eval-resume snapshots")
+            sandbox = await _create_owned_sandbox(
+                provider,
                 SandboxCreateRequest(
                     source=SnapshotSource(snapshot=state.snapshot),
                     resources=_resources(task, entry),
@@ -332,16 +442,13 @@ class SkillsBenchBenchmarkService(BenchmarkService):
                     env_vars={},
                     auto_stop_interval=EVAL_SANDBOX_AUTO_STOP_MINUTES,
                     create_timeout=EVAL_SANDBOX_CREATE_TIMEOUT_SECONDS,
-                )
+                ),
             )
             try:
                 async for chunk in self._run_verifier(request.task_id, task, cwd, sandbox, requested_dataset):
                     yield chunk
             finally:
-                try:
-                    await provider.delete_sandbox(sandbox.id)
-                except Exception:
-                    logger.exception("Failed to delete SkillsBench eval-resume sandbox %s", sandbox.id)
+                await _delete_owned_sandbox(provider, sandbox.id)
 
     async def evaluate_instance(
         self, task_id: str, sandbox: Sandbox, dataset: str | None = None
@@ -351,6 +458,10 @@ class SkillsBenchBenchmarkService(BenchmarkService):
         cwd = _task_cwd(task, entry)
 
         state = EvalResumeState.create(task_id, dataset or "default")
+        try:
+            await cleanup_expired_daytona_snapshots(sandbox)
+        except Exception:
+            logger.exception("Failed to clean expired SkillsBench eval-resume snapshots")
         await create_daytona_snapshot(sandbox, state.snapshot)
         yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
 

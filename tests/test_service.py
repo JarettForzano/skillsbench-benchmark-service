@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -265,6 +267,17 @@ async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
     fresh = FakeSandbox(sandbox_id="resume-sandbox")
     provider = FakeProvider(fresh)
     monkeypatch.setattr(DaytonaProviderConfig, "create_provider", lambda _config: provider)
+    cleanup_calls: list[object] = []
+
+    async def cleanup_expired(candidate: object) -> None:
+        cleanup_calls.append(candidate)
+
+    monkeypatch.setattr(
+        service_module,
+        "cleanup_expired_daytona_snapshots",
+        cleanup_expired,
+        raising=False,
+    )
 
     async def forbidden_setup(*_args: object, **_kwargs: object) -> AsyncGenerator[Any, None]:
         raise AssertionError("setup_task must not run when resuming a filesystem snapshot")
@@ -292,6 +305,7 @@ async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
     assert fresh.command_calls
     assert "/app/instruction.md" not in fresh.files
     assert "/tmp/skillsbench-env-assets.tar.gz" not in fresh.files
+    assert cleanup_calls == [provider]
     assert provider.deleted == [fresh.id]
     assert provider.closed is True
 
@@ -421,6 +435,226 @@ async def test_snapshot_adapter_is_guarded_and_calls_daytona_hook() -> None:
     unsupported = DaytonaSandbox(cast(Any, SimpleNamespace()))
     with pytest.raises(SandboxError, match="does not support filesystem snapshots"):
         await create_daytona_snapshot(unsupported, "snapshot")
+
+
+async def test_initial_evaluation_runs_snapshot_retention_cleanup(
+    skillsbench_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cleanup = AsyncMock()
+    monkeypatch.setattr(
+        service_module,
+        "cleanup_expired_daytona_snapshots",
+        cleanup,
+    )
+    service = await SkillsBenchBenchmarkService.create()
+    sandbox = FakeSandbox()
+    stream = service.evaluate_instance("hello-world", sandbox, dataset="default")
+
+    first = await anext(stream)
+    await stream.aclose()
+
+    assert first.type == "eval_resume_state"
+    cleanup.assert_awaited_once_with(sandbox)
+
+
+async def test_cancelled_resume_sandbox_creation_deletes_late_created_sandbox() -> None:
+    sandbox = FakeSandbox(sandbox_id="resume-sandbox")
+    provider = FakeProvider(sandbox)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_create(_request: SandboxCreateRequest) -> Sandbox:
+        started.set()
+        await release.wait()
+        return sandbox
+
+    provider.create_sandbox = delayed_create  # type: ignore[method-assign]
+    request = SandboxCreateRequest(
+        source=SnapshotSource(snapshot="snapshot"),
+        resources=service_module.Resources(vcpu=1, memory=1, disk=1),
+        name="resume",
+        labels={},
+        env_vars={},
+        auto_stop_interval=15,
+        create_timeout=600,
+    )
+    task = asyncio.create_task(service_module._create_owned_sandbox(provider, request))
+    await started.wait()
+    task.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert provider.deleted == [sandbox.id]
+
+
+async def test_cancelled_resume_sandbox_deletion_finishes_cleanup() -> None:
+    sandbox = FakeSandbox(sandbox_id="resume-sandbox")
+    provider = FakeProvider(sandbox)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_delete(instance_id: str) -> None:
+        started.set()
+        await release.wait()
+        provider.deleted.append(instance_id)
+
+    provider.delete_sandbox = delayed_delete  # type: ignore[method-assign]
+    task = asyncio.create_task(service_module._delete_owned_sandbox(provider, sandbox.id))
+    await started.wait()
+    task.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert provider.deleted == [sandbox.id]
+
+
+def test_snapshot_names_encode_creation_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    created_at = 1_700_000_000
+    monkeypatch.setattr(
+        service_module,
+        "time",
+        SimpleNamespace(time=lambda: created_at),
+        raising=False,
+    )
+
+    state = EvalResumeState.create("hello-world", "default")
+    nonce = state.snapshot.rsplit("-", 1)[-1]
+
+    assert nonce.startswith(service_module.EVAL_SNAPSHOT_TIMESTAMP_MARKER)
+    assert int(nonce[1:9], 16) == created_at
+
+
+async def test_snapshot_janitor_deletes_only_expired_owned_snapshots() -> None:
+    old_time = 1_700_000_000
+    fresh_time = old_time + 30 * 24 * 60 * 60
+    marker = service_module.EVAL_SNAPSHOT_TIMESTAMP_MARKER
+    old_name = service_module._snapshot_name("hello-world", "default", f"{marker}{old_time:08x}{'a' * 23}")
+    fresh_name = service_module._snapshot_name("hello-world", "default", f"{marker}{fresh_time:08x}{'b' * 23}")
+    legacy_active_name = service_module._snapshot_name("hello-world", "default", "0" * 32)
+
+    class SnapshotService:
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+
+        async def list(self, page: int, limit: int) -> SimpleNamespace:
+            assert (page, limit) == (1, 100)
+            return SimpleNamespace(
+                items=[
+                    SimpleNamespace(name=old_name),
+                    SimpleNamespace(name=fresh_name),
+                    SimpleNamespace(name=legacy_active_name),
+                    SimpleNamespace(name="unrelated-snapshot"),
+                ],
+                total_pages=1,
+            )
+
+        async def delete(self, snapshot: SimpleNamespace) -> None:
+            self.deleted.append(snapshot.name)
+
+    snapshots = SnapshotService()
+    provider = SimpleNamespace(_daytona=SimpleNamespace(snapshot=snapshots))
+
+    await service_module.cleanup_expired_daytona_snapshots(
+        provider,
+        now_seconds=fresh_time + 1,
+    )
+
+    assert snapshots.deleted == [old_name]
+
+
+async def test_snapshot_janitor_uses_api_reachable_from_initial_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_time = 1_700_000_000
+    marker = service_module.EVAL_SNAPSHOT_TIMESTAMP_MARKER
+    old_name = service_module._snapshot_name(
+        "hello-world",
+        "default",
+        f"{marker}{old_time:08x}{'a' * 23}",
+    )
+    removed: list[str] = []
+
+    class SnapshotsApi:
+        def __init__(self, _client: object) -> None:
+            pass
+
+        async def get_all_snapshots(
+            self,
+            *,
+            page: int,
+            limit: int,
+            name: str,
+        ) -> SimpleNamespace:
+            assert (page, limit, name) == (
+                1,
+                100,
+                f"{service_module.EVAL_SNAPSHOT_PREFIX}-",
+            )
+            return SimpleNamespace(
+                items=[SimpleNamespace(id="old-id", name=old_name)],
+                total_pages=1,
+            )
+
+        async def remove_snapshot(self, snapshot_id: str) -> None:
+            removed.append(snapshot_id)
+
+    import daytona_api_client_async
+
+    monkeypatch.setattr(daytona_api_client_async, "SnapshotsApi", SnapshotsApi)
+    sandbox = DaytonaSandbox(
+        cast(
+            Any,
+            SimpleNamespace(
+                _sandbox_api=SimpleNamespace(api_client=object()),
+            ),
+        )
+    )
+
+    await service_module.cleanup_expired_daytona_snapshots(
+        sandbox,
+        now_seconds=old_time + service_module.EVAL_SNAPSHOT_RETENTION_SECONDS + 1,
+    )
+
+    assert removed == ["old-id"]
+
+
+async def test_failed_snapshot_creation_attempts_to_delete_partial_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    removed: list[str] = []
+
+    async def create_snapshot(_name: str, timeout: int) -> None:
+        assert timeout == EVAL_SNAPSHOT_TIMEOUT_SECONDS
+        raise RuntimeError("snapshot timed out")
+
+    class SnapshotsApi:
+        def __init__(self, _client: object) -> None:
+            pass
+
+        async def get_snapshot(self, name: str) -> SimpleNamespace:
+            assert name == "snapshot"
+            return SimpleNamespace(id="snapshot-id")
+
+        async def remove_snapshot(self, snapshot_id: str) -> None:
+            removed.append(snapshot_id)
+
+    import daytona_api_client_async
+
+    monkeypatch.setattr(daytona_api_client_async, "SnapshotsApi", SnapshotsApi)
+    inner = SimpleNamespace(
+        _experimental_create_snapshot=create_snapshot,
+        _sandbox_api=SimpleNamespace(api_client=object()),
+    )
+
+    with pytest.raises(RuntimeError, match="snapshot timed out"):
+        await create_daytona_snapshot(DaytonaSandbox(cast(Any, inner)), "snapshot")
+
+    assert removed == ["snapshot-id"]
 
 
 async def test_native_task_markdown_uses_verifier_directory(skillsbench_root: Path) -> None:
