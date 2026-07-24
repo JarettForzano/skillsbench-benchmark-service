@@ -391,7 +391,9 @@ async def test_resume_requires_daytona_provider(skillsbench_root: Path) -> None:
         _ = [chunk async for chunk in service.stream_evaluate_response(without_provider)]
 
     wrong_provider = EvaluateResponseRequest(
-        task_id="hello-world", eval_resume_state=state, sandbox_provider=ModalProviderConfig()
+        task_id="hello-world",
+        eval_resume_state=state,
+        sandbox_provider=ModalProviderConfig(MODAL_TOKEN_ID="token-id", MODAL_TOKEN_SECRET="token-secret"),
     )
     with pytest.raises(ValueError, match="Daytona sandbox_provider"):
         _ = [chunk async for chunk in service.stream_evaluate_response(wrong_provider)]
