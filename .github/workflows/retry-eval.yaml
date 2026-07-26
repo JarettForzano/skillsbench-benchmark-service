@@ -1,6 +1,11 @@
 name: retry-eval
 
 on:
+  push:
+    branches:
+      - jf/add-retry-eval-workflow
+    paths:
+      - .github/workflows/retry-eval.yaml
   workflow_dispatch:
     inputs:
       run_id:
@@ -16,6 +21,6 @@ jobs:
   retry-eval:
     uses: vals-ai/.github/.github/workflows/retry-eval.yaml@main
     with:
-      run_id: ${{ inputs.run_id }}
+      run_id: ${{ inputs.run_id || '1066a05b-a04f-446e-8f79-8cf5a5c35e70' }}
     secrets:
       VALKYRIE_AWS_ROLE_ARN: ${{ secrets.VALKYRIE_AWS_ROLE_ARN }}
