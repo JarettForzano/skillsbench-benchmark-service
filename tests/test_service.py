@@ -124,7 +124,7 @@ def _resume_state(service: SkillsBenchBenchmarkService, dataset: str = "default"
     manifest = service_module._load_image_manifest()
     entry = service_module._manifest_task_entry(manifest, task.task_id)
     cwd = service_module._task_cwd(task, entry)
-    snapshot = service_module._snapshot_name(task.task_id, dataset, "0" * 32)
+    snapshot = service_module._snapshot_name(task.task_id, dataset, "originating-run", "0" * 32)
     return EvalResumeState.create(
         task.task_id,
         dataset,
@@ -327,7 +327,7 @@ async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
     assert provider.closed is True
 
 
-@pytest.mark.parametrize("drift", ["task", "image", "verifier", "evaluator"])
+@pytest.mark.parametrize("drift", ["task", "image", "verifier"])
 async def test_resume_rejects_contract_drift_before_provider_access(
     skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch, drift: str
 ) -> None:
@@ -347,19 +347,10 @@ async def test_resume_rejects_contract_drift_before_provider_access(
             "_load_image_manifest",
             lambda: {"tasks": {"hello-world": {"image": "python:3.13-slim"}}},
         )
-    elif drift == "verifier":
+    else:
         (skillsbench_root / "tasks" / "hello-world" / "tests" / "test.sh").write_text(
             "#!/bin/bash\necho 0 > /logs/verifier/reward.txt\n", encoding="utf-8"
         )
-    else:
-        service_source = Path(service_module.__file__).resolve()
-        read_bytes = Path.read_bytes
-
-        def changed_service_source(path: Path) -> bytes:
-            content = read_bytes(path)
-            return content + b"\n# changed evaluator\n" if path.resolve() == service_source else content
-
-        monkeypatch.setattr(Path, "read_bytes", changed_service_source)
 
     def forbidden_provider(_config: DaytonaProviderConfig) -> SandboxProvider:
         raise AssertionError("contract drift must be rejected before provider access")
@@ -373,6 +364,85 @@ async def test_resume_rejects_contract_drift_before_provider_access(
 
     with pytest.raises(ValueError, match="task contract"):
         _ = [chunk async for chunk in service.stream_evaluate_response(request)]
+
+
+async def test_resume_rejects_changed_evaluator_policy_before_checkpoint_or_provider(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    state = _resume_state(service)
+    monkeypatch.setattr(service_module, "EVALUATOR_CONTRACT_VERSION", 2, raising=False)
+    chunks = []
+
+    def forbidden_provider(_config: DaytonaProviderConfig) -> SandboxProvider:
+        raise AssertionError("evaluator policy drift must be rejected before provider access")
+
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", forbidden_provider)
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=state.model_dump(mode="json"),
+        sandbox_provider=_daytona_config(),
+    )
+
+    with pytest.raises(ValueError, match="task contract"):
+        async for chunk in service.stream_evaluate_response(request):
+            chunks.append(chunk)
+
+    assert chunks == []
+
+
+async def test_resume_rejects_changed_run_id_before_checkpoint_or_provider(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    state = _resume_state(service).model_dump(mode="json")
+    state["run_id"] = "different-run"
+    chunks = []
+
+    def forbidden_provider(_config: DaytonaProviderConfig) -> SandboxProvider:
+        raise AssertionError("run identity drift must be rejected before provider access")
+
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", forbidden_provider)
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=state,
+        sandbox_provider=_daytona_config(),
+    )
+
+    with pytest.raises(ValueError, match="canonical"):
+        async for chunk in service.stream_evaluate_response(request):
+            chunks.append(chunk)
+
+    assert chunks == []
+
+
+async def test_task_contract_ignores_python_cache_files(skillsbench_root: Path) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    original = _resume_state(service).task_contract_sha256
+    tests_dir = skillsbench_root / "tasks" / "hello-world" / "tests"
+    cache_dir = tests_dir / "__pycache__"
+    cache_dir.mkdir()
+    (cache_dir / "test.cpython-312.pyc").write_bytes(b"cache")
+    (tests_dir / "orphan.pyc").write_bytes(b"cache")
+
+    assert _resume_state(service).task_contract_sha256 == original
+
+
+async def test_task_contract_ignores_nonsemantic_service_comment(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    original = _resume_state(service).task_contract_sha256
+    service_source = Path(service_module.__file__).resolve()
+    read_bytes = Path.read_bytes
+
+    def source_with_comment(path: Path) -> bytes:
+        content = read_bytes(path)
+        return content + b"\n# non-semantic comment\n" if path.resolve() == service_source else content
+
+    monkeypatch.setattr(Path, "read_bytes", source_with_comment)
+
+    assert _resume_state(service).task_contract_sha256 == original
 
 
 async def test_resume_sandbox_labels_preserve_originating_run_id(
@@ -626,9 +696,13 @@ async def test_snapshot_janitor_deletes_only_expired_owned_snapshots() -> None:
     old_time = 1_700_000_000
     fresh_time = old_time + 30 * 24 * 60 * 60
     marker = service_module.EVAL_SNAPSHOT_TIMESTAMP_MARKER
-    old_name = service_module._snapshot_name("hello-world", "default", f"{marker}{old_time:08x}{'a' * 23}")
-    fresh_name = service_module._snapshot_name("hello-world", "default", f"{marker}{fresh_time:08x}{'b' * 23}")
-    legacy_active_name = service_module._snapshot_name("hello-world", "default", "0" * 32)
+    old_name = service_module._snapshot_name(
+        "hello-world", "default", "originating-run", f"{marker}{old_time:08x}{'a' * 23}"
+    )
+    fresh_name = service_module._snapshot_name(
+        "hello-world", "default", "originating-run", f"{marker}{fresh_time:08x}{'b' * 23}"
+    )
+    legacy_active_name = service_module._snapshot_name("hello-world", "default", "originating-run", "0" * 32)
 
     class SnapshotService:
         def __init__(self) -> None:
@@ -668,6 +742,7 @@ async def test_snapshot_janitor_uses_api_reachable_from_initial_sandbox(
     old_name = service_module._snapshot_name(
         "hello-world",
         "default",
+        "originating-run",
         f"{marker}{old_time:08x}{'a' * 23}",
     )
     removed: list[str] = []

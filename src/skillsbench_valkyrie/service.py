@@ -73,17 +73,19 @@ EVAL_SNAPSHOT_TIMEOUT_SECONDS = 600
 EVAL_SNAPSHOT_RETENTION_SECONDS = 30 * 24 * 60 * 60
 EVAL_SANDBOX_AUTO_STOP_MINUTES = 15
 EVAL_SANDBOX_CREATE_TIMEOUT_SECONDS = 600
+# Bump when verifier execution or reward interpretation changes semantically.
+EVALUATOR_CONTRACT_VERSION = 1
 
 _WORKDIR_RE = re.compile(r"^\s*WORKDIR\s+(.+?)\s*$", re.IGNORECASE)
 
 
-def _task_binding(task_id: str, dataset: str) -> str:
-    identity = json.dumps([dataset, task_id], separators=(",", ":"))
+def _task_binding(task_id: str, dataset: str, run_id: str) -> str:
+    identity = json.dumps([dataset, task_id, run_id], separators=(",", ":"))
     return hashlib.sha256(identity.encode()).hexdigest()[:12]
 
 
-def _snapshot_name(task_id: str, dataset: str, nonce: str) -> str:
-    return f"{EVAL_SNAPSHOT_PREFIX}-{_task_binding(task_id, dataset)}-{nonce}"
+def _snapshot_name(task_id: str, dataset: str, run_id: str, nonce: str) -> str:
+    return f"{EVAL_SNAPSHOT_PREFIX}-{_task_binding(task_id, dataset, run_id)}-{nonce}"
 
 
 class EvalResumeState(BaseModel):
@@ -117,7 +119,7 @@ class EvalResumeState(BaseModel):
     ) -> EvalResumeState:
         if snapshot is None:
             nonce = f"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}{int(time.time()):08x}{uuid4().hex[:23]}"
-            snapshot = _snapshot_name(task_id, dataset, nonce)
+            snapshot = _snapshot_name(task_id, dataset, run_id, nonce)
         return cls(
             task_id=task_id,
             dataset=dataset,
@@ -129,13 +131,13 @@ class EvalResumeState(BaseModel):
     @model_validator(mode="after")
     def require_task_bound_snapshot(self) -> EvalResumeState:
         nonce = self.snapshot.rsplit("-", 1)[-1]
-        if self.snapshot != _snapshot_name(self.task_id, self.dataset, nonce):
-            raise ValueError("eval_resume_state snapshot is not canonical for its task and dataset")
+        if self.snapshot != _snapshot_name(self.task_id, self.dataset, self.run_id, nonce):
+            raise ValueError("eval_resume_state snapshot is not canonical for its task, dataset, and run")
         return self
 
 
 def _resume_sandbox_name(state: EvalResumeState) -> str:
-    return f"sb-eval-run-v1-{_task_binding(state.task_id, state.dataset)}-{uuid4().hex}"
+    return f"sb-eval-run-v1-{_task_binding(state.task_id, state.dataset, state.run_id)}-{uuid4().hex}"
 
 
 def _sandbox_run_id(sandbox: Sandbox) -> str:
@@ -151,7 +153,9 @@ def _tree_sha256(source_dir: Path) -> str:
     if not source_dir.is_dir():
         digest.update(b"missing")
         return digest.hexdigest()
-    for path in _iter_files(source_dir, excluded_prefixes=set(), excluded_names=set()):
+    for path in _iter_files(source_dir, excluded_prefixes={"__pycache__"}, excluded_names=set()):
+        if path.suffix == ".pyc":
+            continue
         digest.update(path.relative_to(source_dir).as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
@@ -185,7 +189,7 @@ def _eval_task_contract_sha256(
             "remote_dir": task.remote_verifier_dir,
             "timeout_seconds": task.verifier_timeout,
             "tests_sha256": _tree_sha256(task.tests_dir),
-            "service_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "policy_version": EVALUATOR_CONTRACT_VERSION,
         },
     }
     payload = json.dumps(contract, sort_keys=True, separators=(",", ":"), default=str)
@@ -536,11 +540,12 @@ class SkillsBenchBenchmarkService(BenchmarkService):
         cwd = _task_cwd(task, entry)
 
         nonce = f"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}{int(time.time()):08x}{uuid4().hex[:23]}"
-        snapshot = _snapshot_name(task_id, dataset or "default", nonce)
+        run_id = _sandbox_run_id(sandbox)
+        snapshot = _snapshot_name(task_id, dataset or "default", run_id, nonce)
         state = EvalResumeState.create(
             task_id,
             dataset or "default",
-            run_id=_sandbox_run_id(sandbox),
+            run_id=run_id,
             task_contract_sha256=_eval_task_contract_sha256(task, manifest, entry, cwd, snapshot),
             snapshot=snapshot,
         )
