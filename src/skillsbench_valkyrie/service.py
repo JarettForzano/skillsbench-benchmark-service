@@ -87,13 +87,15 @@ def _snapshot_name(task_id: str, dataset: str, nonce: str) -> str:
 
 
 class EvalResumeState(BaseModel):
-    """Task-bound pointer to a durable post-agent filesystem snapshot."""
+    """Run- and contract-bound pointer to a durable post-agent filesystem snapshot."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     version: Literal[1] = 1
     task_id: str = Field(min_length=1)
     dataset: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    task_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     snapshot: str = Field(pattern=rf"^{EVAL_SNAPSHOT_PREFIX}-[0-9a-f]{{12}}-(?:[0-9a-f]{{32}}|t[0-9a-f]{{31}})$")
 
     @field_validator("version", mode="before")
@@ -104,9 +106,25 @@ class EvalResumeState(BaseModel):
         return value
 
     @classmethod
-    def create(cls, task_id: str, dataset: str) -> EvalResumeState:
-        nonce = f"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}{int(time.time()):08x}{uuid4().hex[:23]}"
-        return cls(task_id=task_id, dataset=dataset, snapshot=_snapshot_name(task_id, dataset, nonce))
+    def create(
+        cls,
+        task_id: str,
+        dataset: str,
+        *,
+        run_id: str,
+        task_contract_sha256: str,
+        snapshot: str | None = None,
+    ) -> EvalResumeState:
+        if snapshot is None:
+            nonce = f"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}{int(time.time()):08x}{uuid4().hex[:23]}"
+            snapshot = _snapshot_name(task_id, dataset, nonce)
+        return cls(
+            task_id=task_id,
+            dataset=dataset,
+            run_id=run_id,
+            task_contract_sha256=task_contract_sha256,
+            snapshot=snapshot,
+        )
 
     @model_validator(mode="after")
     def require_task_bound_snapshot(self) -> EvalResumeState:
@@ -118,6 +136,59 @@ class EvalResumeState(BaseModel):
 
 def _resume_sandbox_name(state: EvalResumeState) -> str:
     return f"sb-eval-run-v1-{_task_binding(state.task_id, state.dataset)}-{uuid4().hex}"
+
+
+def _sandbox_run_id(sandbox: Sandbox) -> str:
+    labels = getattr(getattr(sandbox, "_sandbox", None), "labels", None)
+    run_id = labels.get("Id") if isinstance(labels, dict) else None
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("SkillsBench eval resume requires the originating sandbox Id label")
+    return run_id
+
+
+def _tree_sha256(source_dir: Path) -> str:
+    digest = hashlib.sha256()
+    if not source_dir.is_dir():
+        digest.update(b"missing")
+        return digest.hexdigest()
+    for path in _iter_files(source_dir, excluded_prefixes=set(), excluded_names=set()):
+        digest.update(path.relative_to(source_dir).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _eval_task_contract_sha256(
+    task: TaskSpec,
+    manifest: dict[str, Any],
+    entry: dict[str, Any],
+    cwd: str,
+    snapshot: str,
+) -> str:
+    """Hash the local inputs that define resumed verifier behavior."""
+    contract = {
+        "task": {
+            "id": task.task_id,
+            "instruction_sha256": hashlib.sha256(task.instruction.encode("utf-8")).hexdigest(),
+            "config": task.config,
+            "task_set": task.task_set,
+        },
+        "image": {
+            "snapshot": snapshot,
+            "source": _sandbox_source(manifest, entry).model_dump(mode="json"),
+            "resources": _resources(task, entry).model_dump(mode="json"),
+            "cwd": cwd,
+        },
+        "verifier": {
+            "command": _verifier_command(task.remote_verifier_dir),
+            "remote_dir": task.remote_verifier_dir,
+            "timeout_seconds": task.verifier_timeout,
+            "tests_sha256": _tree_sha256(task.tests_dir),
+        },
+    }
+    payload = json.dumps(contract, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _snapshot_created_at(snapshot_name: str) -> int | None:
@@ -418,8 +489,12 @@ class SkillsBenchBenchmarkService(BenchmarkService):
 
         await self.validate_task_ids([request.task_id], dataset=requested_dataset)
         task = _get_task(self.get_dataset(requested_dataset), request.task_id)
-        entry = _manifest_task_entry(_load_image_manifest(), request.task_id)
+        manifest = _load_image_manifest()
+        entry = _manifest_task_entry(manifest, request.task_id)
         cwd = _task_cwd(task, entry)
+        task_contract_sha256 = _eval_task_contract_sha256(task, manifest, entry, cwd, state.snapshot)
+        if state.task_contract_sha256 != task_contract_sha256:
+            raise ValueError("eval_resume_state task contract no longer matches the current task/image/verifier contract")
         yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
 
         async with request.sandbox_provider.create_provider() as provider:
@@ -437,6 +512,7 @@ class SkillsBenchBenchmarkService(BenchmarkService):
                         "Benchmark": "skillsbench",
                         "Task": state.task_id,
                         "Dataset": state.dataset,
+                        "Id": state.run_id,
                         "EvalResume": "true",
                     },
                     env_vars={},
@@ -454,10 +530,19 @@ class SkillsBenchBenchmarkService(BenchmarkService):
         self, task_id: str, sandbox: Sandbox, dataset: str | None = None
     ) -> AsyncGenerator[StreamChunk, None]:
         task = _get_task(self.get_dataset(dataset), task_id)
-        entry = _manifest_task_entry(_load_image_manifest(), task_id)
+        manifest = _load_image_manifest()
+        entry = _manifest_task_entry(manifest, task_id)
         cwd = _task_cwd(task, entry)
 
-        state = EvalResumeState.create(task_id, dataset or "default")
+        nonce = f"{EVAL_SNAPSHOT_TIMESTAMP_MARKER}{int(time.time()):08x}{uuid4().hex[:23]}"
+        snapshot = _snapshot_name(task_id, dataset or "default", nonce)
+        state = EvalResumeState.create(
+            task_id,
+            dataset or "default",
+            run_id=_sandbox_run_id(sandbox),
+            task_contract_sha256=_eval_task_contract_sha256(task, manifest, entry, cwd, snapshot),
+            snapshot=snapshot,
+        )
         try:
             await cleanup_expired_daytona_snapshots(sandbox)
         except Exception:

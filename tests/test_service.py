@@ -49,6 +49,7 @@ class FakeSandbox(Sandbox):
         self.command_calls: list[tuple[str, str | None, float | None]] = []
         self.exec_error = exec_error
         self.command_error: Exception | None = command_error
+        self._sandbox = SimpleNamespace(labels={"Id": "originating-run"})
 
     @property
     def id(self) -> str:
@@ -115,6 +116,22 @@ class FakeProvider(SandboxProvider):
 
 def _daytona_config() -> DaytonaProviderConfig:
     return DaytonaProviderConfig(DAYTONA_API_KEY="key", DAYTONA_API_URL="url", DAYTONA_TARGET="target")
+
+
+def _resume_state(service: SkillsBenchBenchmarkService, dataset: str = "default") -> EvalResumeState:
+    task = service.get_dataset(dataset)["hello-world"]
+    assert isinstance(task, service_module.TaskSpec)
+    manifest = service_module._load_image_manifest()
+    entry = service_module._manifest_task_entry(manifest, task.task_id)
+    cwd = service_module._task_cwd(task, entry)
+    snapshot = service_module._snapshot_name(task.task_id, dataset, "0" * 32)
+    return EvalResumeState.create(
+        task.task_id,
+        dataset,
+        run_id="originating-run",
+        task_contract_sha256=service_module._eval_task_contract_sha256(task, manifest, entry, cwd, snapshot),
+        snapshot=snapshot,
+    )
 
 
 @pytest.fixture
@@ -284,7 +301,7 @@ async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
         yield
 
     monkeypatch.setattr(service, "setup_task", forbidden_setup)
-    state = EvalResumeState.create("hello-world", "default")
+    state = _resume_state(service)
     request = EvaluateResponseRequest(
         task_id="hello-world",
         eval_resume_state=state.model_dump(mode="json"),
@@ -310,6 +327,69 @@ async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
     assert provider.closed is True
 
 
+@pytest.mark.parametrize("drift", ["task", "image", "verifier"])
+async def test_resume_rejects_contract_drift_before_provider_access(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    original = FakeSandbox()
+    checkpoint_stream = service.evaluate_instance("hello-world", original, dataset="default")
+    checkpoint = await anext(checkpoint_stream)
+    await checkpoint_stream.aclose()
+
+    if drift == "task":
+        task = service.get_dataset("default")["hello-world"]
+        assert isinstance(task, service_module.TaskSpec)
+        task.config["metadata"]["difficulty"] = "changed"
+    elif drift == "image":
+        monkeypatch.setattr(
+            service_module,
+            "_load_image_manifest",
+            lambda: {"tasks": {"hello-world": {"image": "python:3.13-slim"}}},
+        )
+    else:
+        (skillsbench_root / "tasks" / "hello-world" / "tests" / "test.sh").write_text(
+            "#!/bin/bash\necho 0 > /logs/verifier/reward.txt\n", encoding="utf-8"
+        )
+
+    def forbidden_provider(_config: DaytonaProviderConfig) -> SandboxProvider:
+        raise AssertionError("contract drift must be rejected before provider access")
+
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", forbidden_provider)
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=checkpoint.data,
+        sandbox_provider=_daytona_config(),
+    )
+
+    with pytest.raises(ValueError, match="task contract"):
+        _ = [chunk async for chunk in service.stream_evaluate_response(request)]
+
+
+async def test_resume_sandbox_labels_preserve_originating_run_id(
+    skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = await SkillsBenchBenchmarkService.create()
+    original = FakeSandbox()
+    original._sandbox = SimpleNamespace(labels={"Id": "originating-run-id"})
+    checkpoint_stream = service.evaluate_instance("hello-world", original, dataset="default")
+    checkpoint = await anext(checkpoint_stream)
+    await checkpoint_stream.aclose()
+
+    provider = FakeProvider(FakeSandbox(sandbox_id="resume-sandbox"))
+    monkeypatch.setattr(DaytonaProviderConfig, "create_provider", lambda _config: provider)
+    request = EvaluateResponseRequest(
+        task_id="hello-world",
+        eval_resume_state=checkpoint.data,
+        sandbox_provider=_daytona_config(),
+    )
+
+    _ = [chunk async for chunk in service.stream_evaluate_response(request)]
+
+    assert provider.create_request is not None
+    assert provider.create_request.labels["Id"] == "originating-run-id"
+
+
 @pytest.mark.parametrize(
     ("request_task_id", "request_dataset", "error"),
     [
@@ -324,7 +404,7 @@ async def test_resume_rejects_task_or_dataset_mismatch(
     error: str,
 ) -> None:
     service = await SkillsBenchBenchmarkService.create()
-    state = EvalResumeState.create("hello-world", "default")
+    state = _resume_state(service)
     request = EvaluateResponseRequest(
         task_id=request_task_id,
         dataset=request_dataset,
@@ -346,7 +426,7 @@ async def test_resume_rejects_task_or_dataset_mismatch(
 )
 async def test_resume_rejects_malformed_state(skillsbench_root: Path, invalid_fields: dict[str, Any]) -> None:
     service = await SkillsBenchBenchmarkService.create()
-    state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")
+    state = _resume_state(service).model_dump(mode="json")
     state.update(invalid_fields)
     request = EvaluateResponseRequest(task_id="hello-world", eval_resume_state=state)
 
@@ -361,7 +441,7 @@ async def test_resume_rejects_non_exact_integer_version_before_checkpoint_or_pro
     version: object,
 ) -> None:
     service = await SkillsBenchBenchmarkService.create()
-    state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")
+    state = _resume_state(service).model_dump(mode="json")
     state["version"] = version
     request = EvaluateResponseRequest(
         task_id="hello-world",
@@ -384,7 +464,7 @@ async def test_resume_rejects_non_exact_integer_version_before_checkpoint_or_pro
 
 async def test_resume_requires_daytona_provider(skillsbench_root: Path) -> None:
     service = await SkillsBenchBenchmarkService.create()
-    state = EvalResumeState.create("hello-world", "default").model_dump(mode="json")
+    state = _resume_state(service).model_dump(mode="json")
 
     without_provider = EvaluateResponseRequest(task_id="hello-world", eval_resume_state=state)
     with pytest.raises(ValueError, match="requires sandbox_provider"):
@@ -406,7 +486,7 @@ async def test_resume_deletes_temporary_sandbox_after_verifier_failure(
     fresh = FakeSandbox(sandbox_id="resume-sandbox", exec_error=RuntimeError("resumed verifier failed"))
     provider = FakeProvider(fresh)
     monkeypatch.setattr(DaytonaProviderConfig, "create_provider", lambda _config: provider)
-    state = EvalResumeState.create("hello-world", "default")
+    state = _resume_state(service)
     request = EvaluateResponseRequest(
         task_id="hello-world",
         eval_resume_state=state.model_dump(mode="json"),
@@ -524,7 +604,9 @@ def test_snapshot_names_encode_creation_time(monkeypatch: pytest.MonkeyPatch) ->
         raising=False,
     )
 
-    state = EvalResumeState.create("hello-world", "default")
+    state = EvalResumeState.create(
+        "hello-world", "default", run_id="originating-run", task_contract_sha256="0" * 64
+    )
     nonce = state.snapshot.rsplit("-", 1)[-1]
 
     assert nonce.startswith(service_module.EVAL_SNAPSHOT_TIMESTAMP_MARKER)
