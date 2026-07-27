@@ -185,6 +185,7 @@ def _eval_task_contract_sha256(
             "remote_dir": task.remote_verifier_dir,
             "timeout_seconds": task.verifier_timeout,
             "tests_sha256": _tree_sha256(task.tests_dir),
+            "service_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         },
     }
     payload = json.dumps(contract, sort_keys=True, separators=(",", ":"), default=str)

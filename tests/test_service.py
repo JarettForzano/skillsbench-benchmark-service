@@ -327,7 +327,7 @@ async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
     assert provider.closed is True
 
 
-@pytest.mark.parametrize("drift", ["task", "image", "verifier"])
+@pytest.mark.parametrize("drift", ["task", "image", "verifier", "evaluator"])
 async def test_resume_rejects_contract_drift_before_provider_access(
     skillsbench_root: Path, monkeypatch: pytest.MonkeyPatch, drift: str
 ) -> None:
@@ -347,10 +347,19 @@ async def test_resume_rejects_contract_drift_before_provider_access(
             "_load_image_manifest",
             lambda: {"tasks": {"hello-world": {"image": "python:3.13-slim"}}},
         )
-    else:
+    elif drift == "verifier":
         (skillsbench_root / "tasks" / "hello-world" / "tests" / "test.sh").write_text(
             "#!/bin/bash\necho 0 > /logs/verifier/reward.txt\n", encoding="utf-8"
         )
+    else:
+        service_source = Path(service_module.__file__).resolve()
+        read_bytes = Path.read_bytes
+
+        def changed_service_source(path: Path) -> bytes:
+            content = read_bytes(path)
+            return content + b"\n# changed evaluator\n" if path.resolve() == service_source else content
+
+        monkeypatch.setattr(Path, "read_bytes", changed_service_source)
 
     def forbidden_provider(_config: DaytonaProviderConfig) -> SandboxProvider:
         raise AssertionError("contract drift must be rejected before provider access")
