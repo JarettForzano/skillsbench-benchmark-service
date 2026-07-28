@@ -299,6 +299,17 @@ async def _delete_owned_sandbox(provider: SandboxProvider, sandbox_id: str) -> N
         logger.exception("Failed to delete SkillsBench eval-resume sandbox %s", sandbox_id)
 
 
+async def _cleanup_created_sandbox(
+    provider: SandboxProvider,
+    creation: asyncio.Task[Sandbox],
+) -> None:
+    try:
+        sandbox = await creation
+    except Exception:
+        return
+    await _delete_owned_sandbox(provider, sandbox.id)
+
+
 async def _create_owned_sandbox(
     provider: SandboxProvider,
     request: SandboxCreateRequest,
@@ -307,8 +318,11 @@ async def _create_owned_sandbox(
     try:
         return await asyncio.shield(creation)
     except asyncio.CancelledError:
-        sandbox = await asyncio.shield(creation)
-        await _delete_owned_sandbox(provider, sandbox.id)
+        cleanup = asyncio.create_task(_cleanup_created_sandbox(provider, creation))
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            pass
         raise
 
 
@@ -556,8 +570,13 @@ class SkillsBenchBenchmarkService(BenchmarkService):
             await cleanup_expired_daytona_snapshots(sandbox)
         except Exception:
             logger.exception("Failed to clean expired SkillsBench eval-resume snapshots")
-        await create_daytona_snapshot(sandbox, state.snapshot)
-        yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
+        try:
+            await create_daytona_snapshot(sandbox, state.snapshot)
+        except ValueError:
+            if isinstance(sandbox, DaytonaSandbox):
+                raise
+        else:
+            yield StreamEvalResumeStateChunk(type="eval_resume_state", data=state.model_dump(mode="json"))
 
         async for chunk in self._run_verifier(task_id, task, cwd, sandbox, dataset):
             yield chunk

@@ -118,6 +118,18 @@ def _daytona_config() -> DaytonaProviderConfig:
     return DaytonaProviderConfig(DAYTONA_API_KEY="key", DAYTONA_API_URL="url", DAYTONA_TARGET="target")
 
 
+def _resume_sandbox_request() -> SandboxCreateRequest:
+    return SandboxCreateRequest(
+        source=SnapshotSource(snapshot="snapshot"),
+        resources=service_module.Resources(vcpu=1, memory=1, disk=1),
+        name="resume",
+        labels={},
+        env_vars={},
+        auto_stop_interval=15,
+        create_timeout=600,
+    )
+
+
 def _resume_state(service: SkillsBenchBenchmarkService, dataset: str = "default") -> EvalResumeState:
     task = service.get_dataset(dataset)["hello-world"]
     assert isinstance(task, service_module.TaskSpec)
@@ -275,6 +287,27 @@ async def test_evaluate_instance_reads_reward(skillsbench_root: Path) -> None:
     assert sandbox.command_calls[0][1] == "/app"
     assert sandbox.command_calls[0][2] is None
     assert result["metadata"]["verifier_reward_dirs"] == ["/logs/verifier", "/logs/tests"]
+
+
+async def test_non_daytona_evaluation_runs_without_retry_checkpoint(
+    skillsbench_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service_module, "create_daytona_snapshot", create_daytona_snapshot)
+    service = await SkillsBenchBenchmarkService.create()
+
+    chunks = [
+        chunk
+        async for chunk in service.evaluate_instance(
+            "hello-world",
+            FakeSandbox(),
+            dataset="default",
+        )
+    ]
+
+    assert not any(chunk.type == "eval_resume_state" for chunk in chunks)
+    assert isinstance(chunks[-1], StreamResultChunk)
+    assert cast(dict[str, Any], chunks[-1].data)["score"] == 1.0
 
 
 async def test_resume_uses_fresh_snapshot_sandbox_without_setup(
@@ -631,16 +664,7 @@ async def test_cancelled_resume_sandbox_creation_deletes_late_created_sandbox() 
         return sandbox
 
     provider.create_sandbox = delayed_create  # type: ignore[method-assign]
-    request = SandboxCreateRequest(
-        source=SnapshotSource(snapshot="snapshot"),
-        resources=service_module.Resources(vcpu=1, memory=1, disk=1),
-        name="resume",
-        labels={},
-        env_vars={},
-        auto_stop_interval=15,
-        create_timeout=600,
-    )
-    task = asyncio.create_task(service_module._create_owned_sandbox(provider, request))
+    task = asyncio.create_task(service_module._create_owned_sandbox(provider, _resume_sandbox_request()))
     await started.wait()
     task.cancel()
     release.set()
@@ -648,6 +672,58 @@ async def test_cancelled_resume_sandbox_creation_deletes_late_created_sandbox() 
     with pytest.raises(asyncio.CancelledError):
         await task
 
+    assert provider.deleted == [sandbox.id]
+
+
+async def test_cancelled_resume_sandbox_creation_preserves_cancellation_when_creation_fails() -> None:
+    provider = FakeProvider(FakeSandbox(sandbox_id="resume-sandbox"))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def failing_create(_request: SandboxCreateRequest) -> Sandbox:
+        started.set()
+        await release.wait()
+        raise SandboxError("provider failed")
+
+    provider.create_sandbox = failing_create  # type: ignore[method-assign]
+    task = asyncio.create_task(service_module._create_owned_sandbox(provider, _resume_sandbox_request()))
+    await started.wait()
+    task.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_repeated_cancellation_still_deletes_late_created_resume_sandbox() -> None:
+    sandbox = FakeSandbox(sandbox_id="resume-sandbox")
+    provider = FakeProvider(sandbox)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    deleted = asyncio.Event()
+
+    async def delayed_create(_request: SandboxCreateRequest) -> Sandbox:
+        started.set()
+        await release.wait()
+        return sandbox
+
+    async def record_delete(instance_id: str) -> None:
+        provider.deleted.append(instance_id)
+        deleted.set()
+
+    provider.create_sandbox = delayed_create  # type: ignore[method-assign]
+    provider.delete_sandbox = record_delete  # type: ignore[method-assign]
+    task = asyncio.create_task(service_module._create_owned_sandbox(provider, _resume_sandbox_request()))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(deleted.wait(), timeout=1)
     assert provider.deleted == [sandbox.id]
 
 
