@@ -212,7 +212,7 @@ async def cleanup_expired_daytona_snapshots(provider: object, now_seconds: int |
     """Delete only expired snapshots owned by SkillsBench eval-resume."""
     daytona = cast(Any, getattr(provider, "_daytona", None))
     snapshot_service = getattr(daytona, "snapshot", None)
-    cutoff = (now_seconds or int(time.time())) - EVAL_SNAPSHOT_RETENTION_SECONDS
+    cutoff = (int(time.time()) if now_seconds is None else now_seconds) - EVAL_SNAPSHOT_RETENTION_SECONDS
     page = 1
     expired: list[Any] = []
     if snapshot_service is not None:
@@ -290,7 +290,10 @@ async def _delete_owned_sandbox(provider: SandboxProvider, sandbox_id: str) -> N
     try:
         await asyncio.shield(cleanup)
     except asyncio.CancelledError:
-        await asyncio.shield(cleanup)
+        try:
+            await asyncio.shield(cleanup)
+        except Exception:
+            logger.exception("Failed to delete SkillsBench eval-resume sandbox %s", sandbox_id)
         raise
     except Exception:
         logger.exception("Failed to delete SkillsBench eval-resume sandbox %s", sandbox_id)

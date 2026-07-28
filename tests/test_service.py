@@ -674,6 +674,27 @@ async def test_cancelled_resume_sandbox_deletion_finishes_cleanup() -> None:
     assert provider.deleted == [sandbox.id]
 
 
+async def test_cleanup_failure_does_not_mask_resume_sandbox_deletion_cancellation() -> None:
+    sandbox = FakeSandbox(sandbox_id="resume-sandbox")
+    provider = FakeProvider(sandbox)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def failing_delete(_instance_id: str) -> None:
+        started.set()
+        await release.wait()
+        raise RuntimeError("cleanup failed")
+
+    provider.delete_sandbox = failing_delete  # type: ignore[method-assign]
+    task = asyncio.create_task(service_module._delete_owned_sandbox(provider, sandbox.id))
+    await started.wait()
+    task.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 def test_snapshot_names_encode_creation_time(monkeypatch: pytest.MonkeyPatch) -> None:
     created_at = 1_700_000_000
     monkeypatch.setattr(
@@ -732,6 +753,25 @@ async def test_snapshot_janitor_deletes_only_expired_owned_snapshots() -> None:
     )
 
     assert snapshots.deleted == [old_name]
+
+
+async def test_snapshot_janitor_respects_epoch_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SnapshotService:
+        async def list(self, page: int, limit: int) -> SimpleNamespace:
+            assert (page, limit) == (1, 100)
+            return SimpleNamespace(items=[], total_pages=1)
+
+        async def delete(self, _snapshot: SimpleNamespace) -> None:
+            raise AssertionError("empty snapshot list must not delete")
+
+    monkeypatch.setattr(
+        service_module.time,
+        "time",
+        lambda: (_ for _ in ()).throw(AssertionError("explicit epoch must not read wall clock")),
+    )
+    provider = SimpleNamespace(_daytona=SimpleNamespace(snapshot=SnapshotService()))
+
+    await service_module.cleanup_expired_daytona_snapshots(provider, now_seconds=0)
 
 
 async def test_snapshot_janitor_uses_api_reachable_from_initial_sandbox(
