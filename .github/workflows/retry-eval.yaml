@@ -6,7 +6,7 @@ on:
       task_id:
         description: Task ID for the smoke run.
         required: true
-        default: dapt-intrusion-detection
+        default: 3d-scan-calc
         type: string
       dataset:
         description: Dataset for the smoke run.
