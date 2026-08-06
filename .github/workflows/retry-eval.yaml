@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   smoke:
-    uses: vals-ai/.github/.github/workflows/benchmark-service-smoke.yaml@jf/harden-retry-eval-rollout
+    uses: vals-ai/.github/.github/workflows/benchmark-service-smoke.yaml@main
     with:
       checkout_submodules: true
     secrets:
@@ -37,7 +37,7 @@ jobs:
 
   retry-eval:
     needs: smoke
-    uses: vals-ai/.github/.github/workflows/retry-eval.yaml@jf/harden-retry-eval-rollout
+    uses: vals-ai/.github/.github/workflows/retry-eval.yaml@main
     with:
       benchmark_name: skillsbench
       checkout_submodules: true
