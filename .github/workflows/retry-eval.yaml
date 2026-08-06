@@ -1,6 +1,9 @@
 name: retry-eval
 
 on:
+  pull_request:
+    branches: [prod]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       task_id:
@@ -20,6 +23,7 @@ permissions:
 
 jobs:
   smoke:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     uses: vals-ai/.github/.github/workflows/benchmark-service-smoke.yaml@main
     with:
       checkout_submodules: true
@@ -29,8 +33,8 @@ jobs:
       NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
       NGROK_URL: ${{ secrets.NGROK_URL }}
       NGROK_PUBLIC_URL: ${{ secrets.NGROK_PUBLIC_URL }}
-      SMOKE_DATASET: ${{ inputs.dataset }}
-      SMOKE_TASK_ID: ${{ inputs.task_id }}
+      SMOKE_DATASET: ${{ inputs.dataset || 'with-skills' }}
+      SMOKE_TASK_ID: ${{ inputs.task_id || '3d-scan-calc' }}
       SMOKE_AGENT: ${{ secrets.SMOKE_AGENT }}
       SMOKE_MODEL: ${{ secrets.SMOKE_MODEL }}
       BENCHMARK_SERVICE_ENV: ${{ secrets.BENCHMARK_SERVICE_ENV }}
@@ -47,5 +51,5 @@ jobs:
       NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       NGROK_URL: ${{ secrets.NGROK_URL }}
       NGROK_PUBLIC_URL: ${{ secrets.NGROK_PUBLIC_URL }}
-      SMOKE_DATASET: ${{ inputs.dataset }}
+      SMOKE_DATASET: ${{ inputs.dataset || 'with-skills' }}
       BENCHMARK_SERVICE_ENV: ${{ secrets.BENCHMARK_SERVICE_ENV }}
