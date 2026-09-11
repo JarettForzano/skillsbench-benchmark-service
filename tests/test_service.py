@@ -621,7 +621,9 @@ async def test_snapshot_adapter_is_guarded_and_calls_daytona_hook() -> None:
     async def create_snapshot(name: str, timeout: int) -> None:
         calls.append((name, timeout))
 
-    sandbox = DaytonaSandbox(cast(Any, SimpleNamespace(labels={}, created_at=None, _experimental_create_snapshot=create_snapshot)))
+    sandbox = DaytonaSandbox(
+        cast(Any, SimpleNamespace(labels={}, created_at=None, _experimental_create_snapshot=create_snapshot))
+    )
     await create_daytona_snapshot(sandbox, "snapshot")
 
     assert calls == [("snapshot", EVAL_SNAPSHOT_TIMEOUT_SECONDS)]
