@@ -621,12 +621,12 @@ async def test_snapshot_adapter_is_guarded_and_calls_daytona_hook() -> None:
     async def create_snapshot(name: str, timeout: int) -> None:
         calls.append((name, timeout))
 
-    sandbox = DaytonaSandbox(cast(Any, SimpleNamespace(_experimental_create_snapshot=create_snapshot)))
+    sandbox = DaytonaSandbox(cast(Any, SimpleNamespace(labels={}, created_at=None, _experimental_create_snapshot=create_snapshot)))
     await create_daytona_snapshot(sandbox, "snapshot")
 
     assert calls == [("snapshot", EVAL_SNAPSHOT_TIMEOUT_SECONDS)]
 
-    unsupported = DaytonaSandbox(cast(Any, SimpleNamespace()))
+    unsupported = DaytonaSandbox(cast(Any, SimpleNamespace(labels={}, created_at=None)))
     with pytest.raises(SandboxError, match="does not support filesystem snapshots"):
         await create_daytona_snapshot(unsupported, "snapshot")
 
@@ -894,6 +894,8 @@ async def test_snapshot_janitor_uses_api_reachable_from_initial_sandbox(
         cast(
             Any,
             SimpleNamespace(
+                labels={},
+                created_at=None,
                 _sandbox_api=SimpleNamespace(api_client=object()),
             ),
         )
@@ -931,6 +933,8 @@ async def test_failed_snapshot_creation_attempts_to_delete_partial_snapshot(
 
     monkeypatch.setattr(daytona_api_client_async, "SnapshotsApi", SnapshotsApi)
     inner = SimpleNamespace(
+        labels={},
+        created_at=None,
         _experimental_create_snapshot=create_snapshot,
         _sandbox_api=SimpleNamespace(api_client=object()),
     )
